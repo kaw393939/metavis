@@ -1,0 +1,17 @@
+{
+  "id": "com.metavis.fx.smpte_bars",
+  "version": "1.0.0",
+  "name": "SMPTE Bars",
+  "category": "generator",
+  "inputs": [],
+  "parameters": [
+    {
+      "type": "float",
+      "name": "intensity",
+      "min": 0,
+      "max": 1,
+      "defaultValue": 1
+    }
+  ],
+  "kernelName": "fx_smpte_bars"
+}

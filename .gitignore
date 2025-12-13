@@ -1,0 +1,24 @@
+## OS / Editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+## SwiftPM / Xcode build artifacts
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserstate
+*.xcuserdata/
+
+## Local environment
+.env
+.venv/
+
+## Generated outputs
+test_outputs/
+
+## Non-source content (keep repo focused on Sources/ + Tests/)
+Docs/
+research_notes/
+assets/
