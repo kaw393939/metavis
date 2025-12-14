@@ -14,7 +14,11 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
     private var pipelineStates: [String: MTLComputePipelineState] = [:]
     private var lutCache: [UUID: MTLTexture] = [:] // Cache 3D LUTs per node
     private var waveformBuffer: MTLBuffer?
+    private let clipReader: ClipReader
+    private let texturePool: TexturePool
     private var isConfigured: Bool = false
+
+    private var renderWarnings: [String] = []
 
     private func compileLibraryFromHardcodedSources(files: [String]) async throws -> MTLLibrary? {
         var source = "#include <metal_stdlib>\nusing namespace metal;\n"
@@ -84,6 +88,9 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
             throw RuntimeError("Failed to create Command Queue.")
         }
         self.commandQueue = queue
+
+        self.clipReader = ClipReader(device: device)
+        self.texturePool = TexturePool(device: device)
     }
     
     public func configure() async throws {
@@ -106,11 +113,15 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
 
                  // Fallback: Runtime Compilation (concatenate a minimal set for tests)
                  self.library = try await compileLibraryFromHardcodedSources(files: [
+                          "ClearColor",        // Solid fills (empty timeline fallback)
                     "ColorSpace",         // IDT/ODT transforms
+                          "ACES",               // Shared ACES helpers (ToneMapping/Grading)
                     "Noise",              // Shared noise helpers (used by blur/bokeh)
                     "FormatConversion",   // RGBA→BGRA swizzle
                     "Compositor",         // Multi-clip alpha blending
                     "Blur",               // fx_blur_h / fx_blur_v
+                          "ToneMapping",        // fx_tonemap_aces / fx_tonemap_pq
+                          "ColorGrading",       // fx_color_grade_simple / fx_apply_lut
                     "Macbeth",            // Procedural color chart
                     "SMPTE",              // Procedural bars
                     "ZonePlate",          // Procedural zone plate
@@ -121,14 +132,18 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
 
         // If we loaded a library but it's missing core kernels, fall back to runtime compilation.
         if let lib = self.library,
-           (lib.makeFunction(name: "fx_blur_h") == nil || lib.makeFunction(name: "fx_blur_v") == nil) {
-            logDebug("⚠️ Bundled library missing blur kernels; recompiling from sources")
+           (lib.makeFunction(name: "fx_blur_h") == nil || lib.makeFunction(name: "fx_blur_v") == nil || lib.makeFunction(name: "clear_color") == nil) {
+            logDebug("⚠️ Bundled library missing core kernels; recompiling from sources")
             self.library = try await compileLibraryFromHardcodedSources(files: [
+                "ClearColor",
                 "ColorSpace",
+                "ACES",
                 "Noise",
                 "FormatConversion",
                 "Compositor",
                 "Blur",
+                "ToneMapping",
+                "ColorGrading",
                 "Macbeth",
                 "SMPTE",
                 "ZonePlate",
@@ -141,6 +156,7 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
         }
         
         // Pre-warm Pipelines for Core Shaders
+        try await cachePipeline(name: "clear_color")
         try await cachePipeline(name: "idt_rec709_to_acescg")
         try await cachePipeline(name: "odt_acescg_to_rec709")
         try await cachePipeline(name: "fx_generate_face_mask") // Vision Mask Gen parameters
@@ -183,11 +199,66 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
     
     public func render(request: RenderRequest) async throws -> RenderResult {
         // ... (Calls internal render)
+        renderWarnings.removeAll(keepingCapacity: true)
+
         guard let tex = try await internalRender(request: request) else {
-             return RenderResult(imageBuffer: nil, metadata: ["error": "Root node texture missing"])
+            return RenderResult(imageBuffer: nil, metadata: ["error": "Root node texture missing"])
         }
-        let data = textureToData(texture: tex)
-        return RenderResult(imageBuffer: data, metadata: [:])
+        let readableTex: MTLTexture
+        var stagingTex: MTLTexture?
+        if tex.storageMode == .private {
+            guard let copied = try await makeCPUReadableCopy(texture: tex) else {
+                texturePool.checkin(tex)
+                return RenderResult(imageBuffer: nil, metadata: ["error": "Failed to stage GPU texture for CPU readback"])
+            }
+            readableTex = copied
+            stagingTex = copied
+        } else {
+            readableTex = tex
+        }
+
+        let data = textureToData(texture: readableTex)
+        if let stagingTex {
+            texturePool.checkin(stagingTex)
+        }
+        texturePool.checkin(tex)
+
+        var metadata: [String: String] = [:]
+        if !renderWarnings.isEmpty {
+            metadata["warnings"] = renderWarnings.joined(separator: " | ")
+        }
+        return RenderResult(imageBuffer: data, metadata: metadata)
+    }
+
+    private func makeCPUReadableCopy(texture: MTLTexture) async throws -> MTLTexture? {
+        let usage: MTLTextureUsage = [.shaderRead, .shaderWrite]
+        guard let staging = texturePool.checkout(
+            width: texture.width,
+            height: texture.height,
+            pixelFormat: texture.pixelFormat,
+            usage: usage,
+            storageMode: .shared
+        ) else {
+            return nil
+        }
+
+        guard let buffer = commandQueue.makeCommandBuffer(),
+              let blit = buffer.makeBlitCommandEncoder() else {
+            texturePool.checkin(staging)
+            return nil
+        }
+
+        blit.copy(from: texture, to: staging)
+        blit.endEncoding()
+
+        await withCheckedContinuation { continuation in
+            buffer.addCompletedHandler { _ in
+                continuation.resume()
+            }
+            buffer.commit()
+        }
+
+        return staging
     }
     
     /// Renders directly into a CVPixelBuffer (for export).
@@ -246,6 +317,8 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
             }
             buffer.commit()
         }
+
+        texturePool.checkin(rootTex)
     }
 
     private func encodeWatermark(_ spec: WatermarkSpec, commandBuffer: MTLCommandBuffer, target: MTLTexture) throws {
@@ -286,11 +359,61 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
             try await configure()
         }
 
+        renderWarnings.removeAll(keepingCapacity: true)
+
         guard let buffer = commandQueue.makeCommandBuffer() else {
             throw RuntimeError("CommandBuffer failed")
         }
         
         var textureMap: [UUID: MTLTexture] = [:]
+
+        // Track how many downstream consumers each node output has so we can reuse
+        // intermediate textures within a single frame and avoid GPU OOM.
+        var remainingUses: [UUID: Int] = [:]
+        remainingUses.reserveCapacity(request.graph.nodes.count)
+        for node in request.graph.nodes {
+            for inputID in node.inputs.values {
+                remainingUses[inputID, default: 0] += 1
+            }
+        }
+
+        // Per-frame reusable textures keyed by descriptor.
+        var reusableByKey: [TexturePool.Key: [MTLTexture]] = [:]
+
+        // Keep strong references to any textures we touch until the GPU work completes.
+        // (Metal requires resources to stay alive until the command buffer finishes.)
+        var frameTextures: [MTLTexture] = []
+        frameTextures.reserveCapacity(request.graph.nodes.count)
+        var frameTextureOIDs: Set<ObjectIdentifier> = []
+
+        func retainForFrame(_ tex: MTLTexture) {
+            let oid = ObjectIdentifier(tex)
+            if frameTextureOIDs.insert(oid).inserted {
+                frameTextures.append(tex)
+            }
+        }
+
+        func reuseKey(for tex: MTLTexture) -> TexturePool.Key {
+            TexturePool.Key(
+                width: tex.width,
+                height: tex.height,
+                pixelFormat: tex.pixelFormat,
+                usageRaw: UInt64(tex.usage.rawValue),
+                storageModeRaw: UInt64(tex.storageMode.rawValue)
+            )
+        }
+
+        func canReuseInFrame(_ tex: MTLTexture) -> Bool {
+            // Only reuse textures that can be written to; source textures are typically read-only.
+            tex.usage.contains(.shaderWrite)
+        }
+
+        func releaseIfDead(_ nodeID: UUID) {
+            guard nodeID != request.graph.rootNodeID else { return }
+            guard let tex = textureMap.removeValue(forKey: nodeID) else { return }
+            guard canReuseInFrame(tex) else { return }
+            reusableByKey[reuseKey(for: tex), default: []].append(tex)
+        }
         
         let height = request.quality.resolutionHeight
         let width: Int
@@ -303,7 +426,29 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
         }
         
         for node in request.graph.nodes {
-            try encodeNode(node, commandBuffer: buffer, textureMap: &textureMap, width: width, height: height)
+            if node.shader == "source_texture" {
+                try await prepareSourceTexture(for: node, request: request, width: width, height: height, textureMap: &textureMap)
+            }
+
+            try encodeNode(
+                node,
+                commandBuffer: buffer,
+                textureMap: &textureMap,
+                width: width,
+                height: height,
+                reusableByKey: &reusableByKey,
+                retainForFrame: retainForFrame
+            )
+
+            // After encoding the node, decrement remaining uses for its inputs.
+            for inputID in node.inputs.values {
+                guard let count = remainingUses[inputID] else { continue }
+                let next = count - 1
+                remainingUses[inputID] = next
+                if next <= 0 {
+                    releaseIfDead(inputID)
+                }
+            }
         }
         
 
@@ -314,11 +459,83 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
             }
             buffer.commit()
         }
-        
-        return textureMap[request.graph.rootNodeID]
+
+        let rootTex = textureMap[request.graph.rootNodeID]
+
+        // Return all non-root textures to the pool for reuse on subsequent frames.
+        // (checkin() is a no-op for textures not created by the pool.)
+        if let rootTex {
+            let rootID = ObjectIdentifier(rootTex)
+            for tex in frameTextures where ObjectIdentifier(tex) != rootID {
+                texturePool.checkin(tex)
+            }
+        } else {
+            for tex in frameTextures {
+                texturePool.checkin(tex)
+            }
+        }
+
+        return rootTex
+    }
+
+    private func prepareSourceTexture(
+        for node: RenderNode,
+        request: RenderRequest,
+        width: Int,
+        height: Int,
+        textureMap: inout [UUID: MTLTexture]
+    ) async throws {
+        guard let assetIDValue = node.parameters["asset_id"],
+              case .string(let assetID) = assetIDValue else {
+            return
+        }
+
+        let timeSeconds: Double
+        if let t = node.parameters["time_seconds"], case .float(let s) = t {
+            timeSeconds = s
+        } else {
+            timeSeconds = request.time.seconds
+        }
+
+        // Resolve sourceFn -> path/URL.
+        let resolved = request.assets[assetID] ?? assetID
+        let url: URL?
+        if let u = URL(string: resolved), u.scheme != nil {
+            url = u
+        } else {
+            url = URL(fileURLWithPath: resolved)
+        }
+        guard let assetURL = url else { return }
+
+        do {
+            let tex = try await clipReader.texture(assetURL: assetURL, timeSeconds: timeSeconds, width: width, height: height)
+            textureMap[node.id] = tex
+
+            // Opportunistic lookahead (assume ~24fps if unknown).
+            clipReader.prefetch(assetURL: assetURL, timeSeconds: timeSeconds + (1.0 / 24.0), width: width, height: height)
+        } catch {
+            let msg = "source_texture decode failed for \(assetURL.lastPathComponent) @ \(String(format: "%.3f", timeSeconds))s: \(error)"
+            renderWarnings.append(msg)
+            logDebug("❌ \(msg)")
+            // If decode fails, keep a deterministic black input.
+            let blackDesc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: width, height: height, mipmapped: false)
+            blackDesc.usage = [.shaderRead]
+            blackDesc.storageMode = .shared
+            if let black = device.makeTexture(descriptor: blackDesc) {
+                textureMap[node.id] = black
+            }
+        }
     }
     
-    private func encodeNode(_ node: RenderNode, commandBuffer: MTLCommandBuffer, textureMap: inout [UUID: MTLTexture], width: Int, height: Int) throws {
+    private func encodeNode(
+        _ node: RenderNode,
+        commandBuffer: MTLCommandBuffer,
+        textureMap: inout [UUID: MTLTexture],
+        width: Int,
+        height: Int,
+        reusableByKey: inout [TexturePool.Key: [MTLTexture]],
+        retainForFrame: (MTLTexture) -> Void
+    ) throws {
         if node.shader == "waveform_monitor" {
              // Special 2-Pass Waveform Generation
              
@@ -366,9 +583,8 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
                  encoder.setComputePipelineState(renPSO)
                  
                  // Bind Output
-                 let destDesc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: 256, height: 256, mipmapped: false)
-                 destDesc.usage = [.shaderRead, .shaderWrite]
-                 if let destTex = device.makeTexture(descriptor: destDesc) {
+                 if let destTex = texturePool.checkout(width: 256, height: 256, pixelFormat: .rgba16Float, usage: [.shaderRead, .shaderWrite]) {
+                     retainForFrame(destTex)
                      encoder.setTexture(destTex, index: 1)
                      textureMap[node.id] = destTex
                      
@@ -410,7 +626,12 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
             if let layer2ID = node.inputs["layer2"], let layer2Tex = textureMap[layer2ID] {
                 encoder.setTexture(layer2Tex, index: 1)
             }
-        } else if let inputID = node.inputs["input"] {
+        } else if node.shader == "source_texture" {
+            // Video source nodes: we preloaded the source texture into textureMap[node.id] before encoding.
+            if let src = textureMap[node.id] {
+                encoder.setTexture(src, index: 0)
+            }
+        } else if let inputID = (node.inputs["input"] ?? node.inputs["source"]) {
             if let inputTex = textureMap[inputID] {
                 encoder.setTexture(inputTex, index: 0)
             } else {
@@ -422,7 +643,7 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
                     encoder.setTexture(black, index: 0)
                 }
             }
-        } else if node.shader == "source_texture" || node.shader == "source_linear_ramp" || node.shader == "source_test_color" {
+        } else if node.shader == "source_linear_ramp" || node.shader == "source_test_color" {
             // Source Node: No input texture needed.
         }
         
@@ -430,10 +651,26 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
         // Use arguments passed to function
         
         // B. Bind Outputs
-        let destDesc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: width, height: height, mipmapped: false)
-        destDesc.usage = [MTLTextureUsage.shaderRead, MTLTextureUsage.shaderWrite]
-
-        guard let destTex = device.makeTexture(descriptor: destDesc) else { return }
+        let outputUsage: MTLTextureUsage = [.shaderRead, .shaderWrite]
+        let outputKey = TexturePool.Key(
+            width: width,
+            height: height,
+            pixelFormat: .rgba16Float,
+            usageRaw: UInt64(outputUsage.rawValue),
+            storageModeRaw: UInt64(MTLStorageMode.private.rawValue)
+        )
+        let destTex: MTLTexture
+        if var bucket = reusableByKey[outputKey], let reused = bucket.popLast() {
+            reusableByKey[outputKey] = bucket
+            destTex = reused
+        } else {
+            guard let fresh = texturePool.checkout(width: width, height: height, pixelFormat: .rgba16Float, usage: outputUsage) else {
+                logDebug("❌ Texture allocation failed (w=\(width) h=\(height)) for node \(node.name) [\(node.shader)]")
+                return
+            }
+            destTex = fresh
+        }
+        retainForFrame(destTex)
         let outputTextureIndex: Int
         if node.shader == "compositor_crossfade" || node.shader == "compositor_alpha_blend" {
             // Compositor kernels use output texture(2)
@@ -467,8 +704,48 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
         } else if node.shader == "compositor_alpha_blend" {
             bindFloat("alpha1", 0)
             bindFloat("alpha2", 1)
+        } else if node.shader == "fx_zone_plate" {
+            bindFloat("time", 0)
         } else if node.shader == "fx_blur_h" || node.shader == "fx_blur_v" {
             bindFloat("radius", 0)
+        } else if node.shader == "fx_tonemap_aces" {
+            // ToneMapping.metal: constant float &exposure [[buffer(0)]]
+            bindFloat("exposure", 0)
+        } else if node.shader == "fx_tonemap_pq" {
+            // ToneMapping.metal: constant float &maxNits [[buffer(0)]]
+            bindFloat("maxNits", 0)
+        } else if node.shader == "fx_color_grade_simple" {
+            // ColorGrading.metal: constant ColorGradeParams &params [[buffer(0)]]
+            struct ColorGradeParams {
+                var exposure: Float
+                var contrast: Float
+                var saturation: Float
+                var temperature: Float
+                var tint: Float
+                // Match `float _padding[3]` in Metal.
+                var _p0: Float
+                var _p1: Float
+                var _p2: Float
+            }
+
+            func f(_ key: String, default def: Float) -> Float {
+                if let val = node.parameters[key], case .float(let v) = val {
+                    return Float(v)
+                }
+                return def
+            }
+
+            var params = ColorGradeParams(
+                exposure: f("exposure", default: 0),
+                contrast: f("contrast", default: 1),
+                saturation: f("saturation", default: 1),
+                temperature: f("temperature", default: 0),
+                tint: f("tint", default: 0),
+                _p0: 0,
+                _p1: 0,
+                _p2: 0
+            )
+            encoder.setBytes(&params, length: MemoryLayout<ColorGradeParams>.stride, index: 0)
         } else if node.shader == "exposure_adjust" {
             bindFloat("ev", 0)
         } else if node.shader == "contrast_adjust" {
@@ -635,6 +912,7 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
 
         switch texture.pixelFormat {
         case .rgba16Float:
+            MetalSimulationDiagnostics.incrementCPUReadback()
             let halfBytesPerRow = width * 8 // 4 * Float16
             var halfWords = [UInt16](repeating: 0, count: width * height * 4)
             halfWords.withUnsafeMutableBytes { ptr in
@@ -655,6 +933,7 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
             return floats.withUnsafeBytes { Data($0) }
 
         default:
+            MetalSimulationDiagnostics.incrementCPUReadback()
             let bytesPerRow = width * 16 // 4 floats * 4 bytes
             var data = Data(count: bytesPerRow * height)
             data.withUnsafeMutableBytes { ptr in

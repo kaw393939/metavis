@@ -25,10 +25,10 @@ kernel void fx_tonemap_aces(
     
     // ACEScg -> Rec.709 Linear
     // Narkowicz curve expects Rec.709 primaries
-    x = float3x3(Core::Color::MAT_ACEScg_to_Rec709) * x;
+    x = float3x3(MAT_ACEScg_to_Rec709) * x;
     
     // ACES approximation (Narkowicz 2015)
-    float3 mapped = Core::Color::ACESFilm(x);
+    float3 mapped = ACESFilm(x);
     
     // Gamma correction (Linear -> sRGB)
     float3 finalColor = pow(mapped, float3(1.0 / 2.2));

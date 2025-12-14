@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "domain": "intrinsic",
+  "id": "mv.retime",
+  "version": "1.0.0",
+  "name": "Retime",
+  "category": "utility",
+  "inputs": [],
+  "parameters": [
+    {
+      "type": "float",
+      "name": "factor",
+      "min": 0.1,
+      "max": 10.0,
+      "defaultValue": 1.0
+    }
+  ],
+  "kernelName": ""
+}

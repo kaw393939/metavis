@@ -88,7 +88,7 @@ final class CDLVerificationTests: XCTestCase {
         }
         
         // Compare Row 0 (Gradient)
-        let rowWidthFloats = 256 * 4 // Engine hardcodes 256 width currently!
+        // Engine hardcodes 256 width currently!
         // My CPU buffer assumed 64 width.
         // I need to account for this.
         // MetalSimulationEngine currently uses let width = 256.

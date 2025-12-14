@@ -27,7 +27,7 @@ public struct TimelineCompiler {
     ) async throws -> RenderRequest {
 
         // Ensure built-in features are available for timeline effects.
-        await FeatureRegistryBootstrap.shared.ensureStandardFeaturesRegistered()
+        try await FeatureRegistryBootstrap.shared.ensureStandardFeaturesRegistered()
         
         var nodes: [RenderNode] = []
         
@@ -167,6 +167,12 @@ public struct TimelineCompiler {
                 throw Error.unknownFeature(id: effect.id)
             }
 
+            // Non-video domains are known/governable but do not compile to Metal nodes.
+            // Keep them in the timeline, but ignore them in the render-graph compiler.
+            guard manifest.domain == .video else {
+                continue
+            }
+
             // For clip-level effects we currently only support single-image input features.
             // The common convention is a `source` port.
             var externalInputs: [String: UUID] = [:]
@@ -208,6 +214,12 @@ public struct TimelineCompiler {
                     shader: "source_test_color",
                     parameters: [:]
                 )
+            } else if id.contains("linear_ramp") || id.contains("linearramp") {
+                sourceNode = RenderNode(
+                    name: "LinearRamp_\(clip.id.uuidString)",
+                    shader: "source_linear_ramp",
+                    parameters: [:]
+                )
             } else if id.contains("macbeth") {
                 sourceNode = RenderNode(
                     name: "Macbeth_\(clip.id.uuidString)",
@@ -236,10 +248,14 @@ public struct TimelineCompiler {
             }
         } else {
             // Video file - would need IDT in full implementation
+            let localTime = (time - clip.startTime) + clip.offset
             sourceNode = RenderNode(
                 name: "Clip_\(clip.id.uuidString)",
                 shader: "source_texture",
-                parameters: ["asset_id": .string(clip.asset.sourceFn)]
+                parameters: [
+                    "asset_id": .string(clip.asset.sourceFn),
+                    "time_seconds": .float(localTime.seconds)
+                ]
             )
         }
         

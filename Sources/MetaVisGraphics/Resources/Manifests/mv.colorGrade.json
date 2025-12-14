@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "domain": "intrinsic",
+  "id": "mv.colorGrade",
+  "version": "1.0.0",
+  "name": "Color Grade",
+  "category": "color",
+  "inputs": [],
+  "parameters": [],
+  "kernelName": ""
+}

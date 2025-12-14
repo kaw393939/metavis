@@ -108,7 +108,8 @@ let package = Package(
                 "MetaVisServices",
                 "MetaVisExport",
                 "MetaVisPerception"
-            ]
+            ],
+            resources: [.process("Resources")]
         ),
 
         // 8. MetaVisPerception (Computer Vision)
@@ -137,6 +138,7 @@ let package = Package(
                 "MetaVisSimulation",
                 "MetaVisIngest",
                 "MetaVisExport",
+                "MetaVisQC",
                 "MetaVisServices",
                 "MetaVisPerception",
                 "MetaVisAudio",
@@ -160,7 +162,11 @@ let package = Package(
                 "MetaVisSession",
                 "MetaVisIngest",
                 "MetaVisTimeline",
-                "MetaVisCore"
+                "MetaVisCore",
+                "MetaVisSimulation",
+                "MetaVisExport",
+                "MetaVisQC",
+                "MetaVisPerception"
             ]
         ),
     ]

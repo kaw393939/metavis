@@ -182,8 +182,11 @@ kernel void fx_bokeh_blur(
     
     float4 accumColor = float4(0.0);
     float totalWeight = 0.0;
-    
-    const int samples = 64; 
+
+    // Adaptive sampling: avoid a fixed 64-sample loop for all radii.
+    // Caps worst-case texture samples per pixel while preserving quality for small radii.
+    const int samples = int(clamp(ceil(radius * 1.25), 8.0, 32.0));
+    const float invSamples = 1.0 / float(samples);
     const float goldenAngle = 2.39996323;
     
     float c, s_val;
@@ -192,7 +195,7 @@ kernel void fx_bokeh_blur(
     float2 dir = float2(1.0, 0.0); 
 
     for (int i = 0; i < samples; ++i) {
-        float r = sqrt(float(i) / float(samples)) * radius;
+        float r = sqrt((float(i) + 0.5) * invSamples) * radius;
         float2 offset = dir * r * texelSize;
         dir = rot * dir;
         

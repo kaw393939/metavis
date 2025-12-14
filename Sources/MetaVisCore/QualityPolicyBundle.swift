@@ -83,12 +83,20 @@ public struct QualityPolicyBundle: Codable, Sendable, Equatable {
     public var export: ExportGovernance
     public var qc: DeterministicQCPolicy
     public var ai: AIGatePolicy?
+    public var aiUsage: AIUsagePolicy?
     public var privacy: PrivacyPolicy
 
-    public init(export: ExportGovernance, qc: DeterministicQCPolicy, ai: AIGatePolicy? = nil, privacy: PrivacyPolicy = PrivacyPolicy()) {
+    public init(
+        export: ExportGovernance,
+        qc: DeterministicQCPolicy,
+        ai: AIGatePolicy? = nil,
+        aiUsage: AIUsagePolicy? = nil,
+        privacy: PrivacyPolicy = PrivacyPolicy()
+    ) {
         self.export = export
         self.qc = qc
         self.ai = ai
+        self.aiUsage = aiUsage
         self.privacy = privacy
     }
 }

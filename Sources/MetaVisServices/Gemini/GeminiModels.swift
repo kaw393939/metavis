@@ -16,15 +16,23 @@ public struct GeminiGenerateContentRequest: Codable, Sendable {
     public enum Part: Codable, Sendable {
         case text(String)
         case inlineData(mimeType: String, dataBase64: String)
+        /// Reference server-side or remote media (e.g. gs:// or https://) when inline data is too large.
+        case fileData(mimeType: String, fileUri: String)
 
         private enum CodingKeys: String, CodingKey {
             case text
             case inlineData = "inline_data"
+            case fileData = "file_data"
         }
 
         private enum InlineDataKeys: String, CodingKey {
             case mimeType = "mime_type"
             case data
+        }
+
+        private enum FileDataKeys: String, CodingKey {
+            case mimeType = "mime_type"
+            case fileUri = "file_uri"
         }
 
         public func encode(to encoder: any Encoder) throws {
@@ -36,6 +44,10 @@ public struct GeminiGenerateContentRequest: Codable, Sendable {
                 var nested = container.nestedContainer(keyedBy: InlineDataKeys.self, forKey: .inlineData)
                 try nested.encode(mimeType, forKey: .mimeType)
                 try nested.encode(dataBase64, forKey: .data)
+            case .fileData(let mimeType, let fileUri):
+                var nested = container.nestedContainer(keyedBy: FileDataKeys.self, forKey: .fileData)
+                try nested.encode(mimeType, forKey: .mimeType)
+                try nested.encode(fileUri, forKey: .fileUri)
             }
         }
 
@@ -50,6 +62,13 @@ public struct GeminiGenerateContentRequest: Codable, Sendable {
                 let mimeType = try nested.decode(String.self, forKey: .mimeType)
                 let dataBase64 = try nested.decode(String.self, forKey: .data)
                 self = .inlineData(mimeType: mimeType, dataBase64: dataBase64)
+                return
+            }
+            if container.contains(.fileData) {
+                let nested = try container.nestedContainer(keyedBy: FileDataKeys.self, forKey: .fileData)
+                let mimeType = try nested.decode(String.self, forKey: .mimeType)
+                let fileUri = try nested.decode(String.self, forKey: .fileUri)
+                self = .fileData(mimeType: mimeType, fileUri: fileUri)
                 return
             }
             throw GeminiError.decode("Unknown Part")

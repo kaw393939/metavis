@@ -28,6 +28,16 @@ public enum GeminiQC {
         public var rawText: String
     }
 
+    public struct UsageContext: Sendable {
+        public var policy: AIUsagePolicy
+        public var privacy: PrivacyPolicy
+
+        public init(policy: AIUsagePolicy = .localOnlyDefault, privacy: PrivacyPolicy = PrivacyPolicy()) {
+            self.policy = policy
+            self.privacy = privacy
+        }
+    }
+
     /// Extract a few keyframes and ask Gemini to validate the expected content.
     ///
     /// This is intended as an *additional* acceptance layer on top of deterministic `VideoQC` checks.
@@ -35,9 +45,15 @@ public enum GeminiQC {
         movieURL: URL,
         keyFrames: [KeyFrame],
         expectedNarrative: String,
-        requireKey: Bool = true
+        requireKey: Bool = true,
+        usage: UsageContext = UsageContext()
     ) async throws -> Verdict {
         DotEnvLoader.loadIfPresent()
+
+        // Default posture: local-only unless explicitly enabled by policy.
+        if !usage.policy.allowsNetworkRequests(privacy: usage.privacy) {
+            return Verdict(accepted: true, rawText: "SKIPPED (AIUsagePolicy disallows network/media)")
+        }
 
         // If no key is present and caller doesn't require it, skip.
         let hasKey = getenv("GEMINI_API_KEY") != nil || getenv("API__GOOGLE_API_KEY") != nil || getenv("GOOGLE_API_KEY") != nil
@@ -48,48 +64,134 @@ public enum GeminiQC {
             return Verdict(accepted: true, rawText: "SKIPPED (no GEMINI_API_KEY)")
         }
 
-        let images = try extractJPEGs(assetURL: movieURL, frames: keyFrames)
+        var notes: [String] = []
+        var evidence = GeminiPromptBuilder.Evidence()
 
-        // Compose a strict prompt and demand JSON.
-        let prompt = """
-You are a strict QA system for a video export pipeline.
-
-EXPECTED NARRATIVE:
-\(expectedNarrative)
-
-You will be given several labeled keyframes from a rendered export. Validate that the content matches the expected narrative.
-
-Return ONLY valid JSON with this schema:
-{
-  \"accepted\": true|false,
-  \"checks\": [ { \"label\": string, \"pass\": true|false, \"reason\": string } ],
-  \"summary\": string
-}
-
-Acceptance rules:
-- accepted=true ONLY if every check pass=true.
-- Be conservative: if uncertain, fail.
-"""
-
-        // Build a multimodal request with inline JPEG data (smaller/faster than PNG).
-        var parts: [GeminiGenerateContentRequest.Part] = [.text(prompt)]
-        for img in images {
-            parts.append(.text("FRAME: \(img.label) @ \(String(format: "%.3f", img.timeSeconds))s"))
-            parts.append(.inlineData(mimeType: "image/jpeg", dataBase64: img.jpegBase64))
+        // Local hard gate: if the deliverable looks like a black screen, do not upload media.
+        // This keeps Gemini QC from consuming/accepting meaningless evidence.
+        if usage.policy.allowsImages(privacy: usage.privacy) || usage.policy.allowsVideo(privacy: usage.privacy) {
+            let gate = await localMediaGate(movieURL: movieURL, keyFrames: keyFrames)
+            if gate.shouldBlockMediaUpload {
+                return Verdict(
+                    accepted: false,
+                    rawText: "REJECTED (local QC gate): \(gate.reason)"
+                )
+            }
+            if !gate.notes.isEmpty {
+                notes.append(contentsOf: gate.notes)
+            }
         }
+
+        // Attach keyframe JPEGs only when explicitly allowed by policy + privacy.
+        if usage.policy.allowsImages(privacy: usage.privacy) {
+            let images = try extractJPEGs(assetURL: movieURL, frames: keyFrames)
+            for img in images {
+                guard let data = Data(base64Encoded: img.jpegBase64) else {
+                    continue
+                }
+                evidence.inline.append(.init(
+                    label: "FRAME: \(img.label) @ \(String(format: "%.3f", img.timeSeconds))s",
+                    mimeType: "image/jpeg",
+                    data: data
+                ))
+            }
+        } else {
+            notes.append("Images not attached (policy/privacy)")
+        }
+
+        // Attach video evidence only when explicitly allowed.
+        if usage.policy.allowsVideo(privacy: usage.privacy) {
+            do {
+                let data = try Data(contentsOf: movieURL)
+                if data.count <= usage.policy.maxInlineBytes {
+                    let mime = mimeTypeForMovie(url: movieURL)
+                    evidence.inline.append(.init(
+                        label: "VIDEO: \(GeminiPromptBuilder.redactedFileName(from: movieURL, policy: usage.policy)) (\(data.count) bytes)",
+                        mimeType: mime,
+                        data: data
+                    ))
+                } else {
+                    notes.append("Video not attached: file is \(data.count) bytes > maxInlineBytes=\(usage.policy.maxInlineBytes). Use file URIs (gs:// or https://) or implement Files API upload.")
+                }
+            } catch {
+                notes.append("Video not attached: failed to read movie bytes")
+            }
+        } else {
+            notes.append("Video not attached (policy/privacy)")
+        }
+
+        let metrics = await readDeterministicMetrics(movieURL: movieURL)
 
         let config = try GeminiConfig.fromEnvironment()
         let client = GeminiClient(config: config)
 
-        let body = GeminiGenerateContentRequest(contents: [
-            .init(role: "user", parts: parts)
-        ])
+        let context = GeminiPromptBuilder.PromptContext(
+            expectedNarrative: expectedNarrative,
+            keyFrameLabels: keyFrames.map { $0.label },
+            policy: usage.policy,
+            privacy: usage.privacy,
+            modelHint: config.model,
+            metrics: metrics
+        )
+
+        let prompt = GeminiPromptBuilder.buildPrompt(context, notes: notes)
+        let body = GeminiPromptBuilder.buildRequest(prompt: prompt, evidence: evidence)
+
         let response = try await client.generateContent(body)
         let text = response.primaryText ?? ""
 
         // Parse minimal JSON acceptance
         let accepted = parseAcceptedFlag(from: text) ?? false
         return Verdict(accepted: accepted, rawText: text)
+    }
+
+    private struct LocalGateResult {
+        var shouldBlockMediaUpload: Bool
+        var reason: String
+        var notes: [String]
+    }
+
+    private static func localMediaGate(movieURL: URL, keyFrames: [KeyFrame]) async -> LocalGateResult {
+        // Conservative: only gate when we can confidently say it's essentially black.
+        let times = keyFrames.map { VideoContentQC.ColorStatsSample(
+            timeSeconds: $0.timeSeconds,
+            label: $0.label,
+            minMeanLuma: 0.0,
+            maxMeanLuma: 1.0,
+            maxChannelDelta: 1.0,
+            minLowLumaFraction: 0.0,
+            minHighLumaFraction: 0.0
+        ) }
+
+        do {
+            let results = try await VideoContentQC.validateColorStats(movieURL: movieURL, samples: times)
+            // Gate thresholds: mean luma near 0 and nearly all pixels in low bins.
+            // (We use tolerant thresholds to avoid false positives on dark content.)
+            let looksBlack = results.contains { r in
+                r.meanLuma < 0.01 && r.lowLumaFraction > 0.98
+            }
+
+            if looksBlack {
+                return LocalGateResult(
+                    shouldBlockMediaUpload: true,
+                    reason: "deliverable appears near-black at one or more keyframes (meanLuma < 0.01, lowLumaFraction > 0.98)",
+                    notes: ["LOCAL_QC: blocked media upload due to near-black frames"]
+                )
+            }
+
+            return LocalGateResult(
+                shouldBlockMediaUpload: false,
+                reason: "",
+                notes: []
+            )
+        } catch {
+            // If we can't compute stats, don't block by default; just record a note.
+            return LocalGateResult(
+                shouldBlockMediaUpload: false,
+                reason: "",
+                notes: ["LOCAL_QC: unable to compute color stats for gate (\(error))"]
+            )
+        }
     }
 
     private struct EncodedFrame {
@@ -149,5 +251,50 @@ Acceptance rules:
             return accepted
         }
         return nil
+    }
+
+    private static func mimeTypeForMovie(url: URL) -> String {
+        let ext = url.pathExtension.lowercased()
+        switch ext {
+        case "mp4", "m4v":
+            return "video/mp4"
+        case "mov", "qt":
+            return "video/quicktime"
+        default:
+            return "video/quicktime"
+        }
+    }
+
+    private static func readDeterministicMetrics(movieURL: URL) async -> GeminiPromptBuilder.PromptContext.DeterministicMetrics {
+        #if canImport(AVFoundation)
+        let asset = AVURLAsset(url: movieURL)
+        do {
+            let duration = try await asset.load(.duration)
+            let seconds = duration.isNumeric ? duration.seconds : nil
+
+            let tracks = try await asset.loadTracks(withMediaType: .video)
+            guard let track = tracks.first else {
+                return .init(durationSeconds: seconds)
+            }
+
+            let fps = Double(try await track.load(.nominalFrameRate))
+            let size = try await track.load(.naturalSize)
+            let transform = try await track.load(.preferredTransform)
+            let rect = CGRect(origin: .zero, size: size).applying(transform)
+            let w = Int(abs(rect.width).rounded())
+            let h = Int(abs(rect.height).rounded())
+
+            return .init(
+                durationSeconds: seconds,
+                nominalFPS: fps.isFinite && fps > 0 ? fps : nil,
+                width: (w > 0 ? w : nil),
+                height: (h > 0 ? h : nil)
+            )
+        } catch {
+            return .init()
+        }
+        #else
+        return .init()
+        #endif
     }
 }

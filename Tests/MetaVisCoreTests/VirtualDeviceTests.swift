@@ -52,7 +52,7 @@ final class VirtualDeviceTests: XCTestCase {
         XCTAssertEqual(newProps["iso"], .float(1600.0))
         
         // 4. Test Action
-        try await camera.perform(action: "record", with: [:])
+        _ = try await camera.perform(action: "record", with: [:])
         let action = await camera.lastAction
         XCTAssertEqual(action, "record")
     }

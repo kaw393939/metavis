@@ -73,4 +73,28 @@ public class AudioMasteringChain {
     public func applyGoldenMasterSettings() {
         // Legacy Stub
     }
+
+    /// Deterministic dialog cleanup preset.
+    ///
+    /// v1 goal: reduce low-frequency rumble, add intelligibility presence, and raise overall level.
+    public func applyDialogCleanwaterPresetV1() {
+        // Low shelf: attenuate lows
+        eqNode.bands[0].filterType = .lowShelf
+        eqNode.bands[0].frequency = 120.0
+        eqNode.bands[0].gain = -4.0
+
+        // Presence: boost around 3kHz
+        eqNode.bands[1].filterType = .parametric
+        eqNode.bands[1].frequency = 3000.0
+        eqNode.bands[1].bandwidth = 1.0
+        eqNode.bands[1].gain = 2.0
+
+        // High shelf: slight lift
+        eqNode.bands[2].filterType = .highShelf
+        eqNode.bands[2].frequency = 9000.0
+        eqNode.bands[2].gain = 1.0
+
+        // Fixed gain lift (deterministic)
+        eqNode.globalGain = 6.0
+    }
 }

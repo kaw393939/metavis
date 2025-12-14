@@ -2,9 +2,184 @@ import Foundation
 import AVFoundation
 import CoreGraphics
 import CoreVideo
+import VideoToolbox
 import MetaVisPerception
 
 public enum VideoContentQC {
+    private static let metalFingerprinter = MetalQCFingerprint.shared
+    private static let metalColorStats = MetalQCColorStats.shared
+
+    private final class PixelBufferSampler {
+        enum SamplerError: Swift.Error, LocalizedError {
+            case missingVideoTrack
+            case cannotCreateReader
+            case cannotAddOutput
+            case cannotStartReading(String)
+            case noSample
+            case noImageBuffer
+
+            var errorDescription: String? {
+                switch self {
+                case .missingVideoTrack: return "No video track found"
+                case .cannotCreateReader: return "Failed to create AVAssetReader"
+                case .cannotAddOutput: return "Failed to configure AVAssetReader output"
+                case .cannotStartReading(let msg): return "AVAssetReader failed to start: \(msg)"
+                case .noSample: return "No video sample available"
+                case .noImageBuffer: return "SampleBuffer missing CVImageBuffer"
+                }
+            }
+        }
+
+        private let asset: AVURLAsset
+        private let track: AVAssetTrack
+        private let duration: CMTime
+
+        private static let timebaseTimescale: CMTimeScale = 600
+        private static let endEpsilon: CMTime = CMTime(value: 1, timescale: timebaseTimescale) // 1/600s
+        private static let preroll: CMTime = CMTime(seconds: 2.0, preferredTimescale: timebaseTimescale)
+
+        private var reader: AVAssetReader?
+        private var output: AVAssetReaderTrackOutput?
+        private var lastPTS: CMTime = .invalid
+
+        private init(asset: AVURLAsset, track: AVAssetTrack, duration: CMTime) {
+            self.asset = asset
+            self.track = track
+            self.duration = duration
+        }
+
+        static func make(url: URL) async throws -> PixelBufferSampler {
+            let asset = AVURLAsset(url: url)
+            let tracks = try await asset.loadTracks(withMediaType: .video)
+            guard let track = tracks.first else {
+                throw SamplerError.missingVideoTrack
+            }
+
+            let duration = try await asset.load(.duration)
+            return PixelBufferSampler(asset: asset, track: track, duration: duration)
+        }
+
+        private func clampToAssetDuration(_ time: CMTime) -> CMTime {
+            guard duration.isNumeric && duration.seconds.isFinite else {
+                return time
+            }
+            if duration <= .zero {
+                return .zero
+            }
+
+            let t = CMTimeMaximum(.zero, time)
+            let latest = CMTimeMaximum(.zero, duration - Self.endEpsilon)
+            return CMTimeMinimum(t, latest)
+        }
+
+        private func restart(at time: CMTime) throws {
+            reader?.cancelReading()
+            reader = nil
+            output = nil
+
+            let r: AVAssetReader
+            do {
+                r = try AVAssetReader(asset: asset)
+            } catch {
+                throw SamplerError.cannotCreateReader
+            }
+
+            let settings: [String: Any] = [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+            ]
+            let out = AVAssetReaderTrackOutput(track: track, outputSettings: settings)
+            out.alwaysCopiesSampleData = false
+
+            guard r.canAdd(out) else {
+                throw SamplerError.cannotAddOutput
+            }
+            r.add(out)
+
+            // Avoid setting `reader.timeRange` here.
+            // In practice (and in our own `VideoQC.countVideoSamples`), scanning forward from the start
+            // is the most reliable way to ensure we can always decode frames for compressed sources.
+
+            guard r.startReading() else {
+                throw SamplerError.cannotStartReading(r.error?.localizedDescription ?? "unknown")
+            }
+
+            reader = r
+            output = out
+            lastPTS = .invalid
+        }
+
+        func pixelBuffer(closestTo time: CMTime) throws -> CVPixelBuffer {
+            try pixelBufferImpl(closestTo: clampToAssetDuration(time), didRetry: false)
+        }
+
+        private func pixelBufferImpl(closestTo time: CMTime, didRetry: Bool) throws -> CVPixelBuffer {
+            if reader == nil || output == nil {
+                try restart(at: time)
+            }
+            guard let r = reader, let o = output else {
+                throw SamplerError.cannotStartReading("reader/output unavailable")
+            }
+
+            if lastPTS.isValid {
+                if time < lastPTS {
+                    try restart(at: time)
+                } else {
+                    let delta = CMTimeSubtract(time, lastPTS)
+                    if delta.isValid, delta.seconds > 2.0 {
+                        try restart(at: time)
+                    }
+                }
+            }
+
+            var previous: CMSampleBuffer?
+            var next: CMSampleBuffer?
+
+            while true {
+                if let sample = o.copyNextSampleBuffer() {
+                    let pts = CMSampleBufferGetPresentationTimeStamp(sample)
+                    lastPTS = pts
+                    if pts >= time {
+                        next = sample
+                        break
+                    }
+                    previous = sample
+                    continue
+                }
+
+                if r.status == .failed {
+                    throw SamplerError.cannotStartReading(r.error?.localizedDescription ?? "failed")
+                }
+                break
+            }
+
+            let chosen: CMSampleBuffer?
+            if let prev = previous, let nxt = next {
+                let prevPTS = CMSampleBufferGetPresentationTimeStamp(prev)
+                let nextPTS = CMSampleBufferGetPresentationTimeStamp(nxt)
+                let dp = abs(prevPTS.seconds - time.seconds)
+                let dn = abs(nextPTS.seconds - time.seconds)
+                chosen = (dn <= dp) ? nxt : prev
+            } else {
+                chosen = next ?? previous
+            }
+
+            guard let sample = chosen else {
+                // Some codecs require decode history; retry once starting from an earlier time.
+                if !didRetry {
+                    // As a last resort, restart from zero (full decode history) and scan forward.
+                    try restart(at: .zero)
+                    return try pixelBufferImpl(closestTo: time, didRetry: true)
+                }
+                throw SamplerError.noSample
+            }
+            guard let imageBuffer = CMSampleBufferGetImageBuffer(sample) else {
+                throw SamplerError.noImageBuffer
+            }
+            return imageBuffer
+        }
+    }
+
+
     public struct Sample: Sendable {
         public var timeSeconds: Double
         public var label: String
@@ -59,19 +234,15 @@ public enum VideoContentQC {
         movieURL: URL,
         samples: [Sample]
     ) async throws -> [(String, Fingerprint)] {
-        let asset = AVURLAsset(url: movieURL)
-        let generator = AVAssetImageGenerator(asset: asset)
-        generator.appliesPreferredTrackTransform = true
-        generator.requestedTimeToleranceBefore = .zero
-        generator.requestedTimeToleranceAfter = .zero
+        let sampler = try await PixelBufferSampler.make(url: movieURL)
 
         var out: [(String, Fingerprint)] = []
         out.reserveCapacity(samples.count)
 
         for s in samples {
             let time = CMTime(seconds: s.timeSeconds, preferredTimescale: 600)
-            let cg = try generator.copyCGImage(at: time, actualTime: nil)
-            let fp = try fingerprint(cgImage: cg)
+            let pb = try sampler.pixelBuffer(closestTo: time)
+            let fp = try fingerprint(pixelBuffer: pb)
             out.append((s.label, fp))
         }
         return out
@@ -124,28 +295,43 @@ public enum VideoContentQC {
         samples: [ColorStatsSample],
         maxDimension: Int = 256
     ) async throws -> [ColorStatsResult] {
-        let asset = AVURLAsset(url: movieURL)
-        let generator = AVAssetImageGenerator(asset: asset)
-        generator.appliesPreferredTrackTransform = true
-        generator.requestedTimeToleranceBefore = .zero
-        generator.requestedTimeToleranceAfter = .zero
-
-        let analyzer = VideoAnalyzer(options: .init(maxDimension: maxDimension))
+        let sampler = try await PixelBufferSampler.make(url: movieURL)
 
         var out: [ColorStatsResult] = []
         out.reserveCapacity(samples.count)
 
         for s in samples {
             let time = CMTime(seconds: s.timeSeconds, preferredTimescale: 600)
-            let cg = try generator.copyCGImage(at: time, actualTime: nil)
-            let pb = try pixelBuffer(from: cg)
-            let analysis = try analyzer.analyze(pixelBuffer: pb)
+            let pb = try sampler.pixelBuffer(closestTo: time)
 
-            let meanRGB = analysis.dominantColors.first ?? SIMD3<Float>(0, 0, 0)
-            let meanLuma = meanLuma(from: analysis.lumaHistogram)
-            let lowFrac = lumaFraction(in: analysis.lumaHistogram, range: 0...25)
-            let highFrac = lumaFraction(in: analysis.lumaHistogram, range: 230...255)
-            let peakBin = analysis.lumaHistogram.enumerated().max(by: { $0.element < $1.element })?.offset ?? 0
+            let meanRGB: SIMD3<Float>
+            let histogram: [Float]
+            let peakBin: Int
+
+            if let metalColorStats {
+                do {
+                    let result = try metalColorStats.colorStats(pixelBuffer: pb, maxDimension: maxDimension)
+                    meanRGB = result.meanRGB
+                    histogram = result.histogram
+                    peakBin = result.peakBin
+                } catch {
+                    let analyzer = VideoAnalyzer(options: .init(maxDimension: maxDimension))
+                    let analysis = try analyzer.analyze(pixelBuffer: pb)
+                    meanRGB = analysis.dominantColors.first ?? SIMD3<Float>(0, 0, 0)
+                    histogram = analysis.lumaHistogram
+                    peakBin = analysis.lumaHistogram.enumerated().max(by: { $0.element < $1.element })?.offset ?? 0
+                }
+            } else {
+                let analyzer = VideoAnalyzer(options: .init(maxDimension: maxDimension))
+                let analysis = try analyzer.analyze(pixelBuffer: pb)
+                meanRGB = analysis.dominantColors.first ?? SIMD3<Float>(0, 0, 0)
+                histogram = analysis.lumaHistogram
+                peakBin = analysis.lumaHistogram.enumerated().max(by: { $0.element < $1.element })?.offset ?? 0
+            }
+
+            let meanLuma = meanLuma(from: histogram)
+            let lowFrac = lumaFraction(in: histogram, range: 0...25)
+            let highFrac = lumaFraction(in: histogram, range: 230...255)
 
             // Coarse validation.
             if !(meanLuma >= s.minMeanLuma && meanLuma <= s.maxMeanLuma) {
@@ -198,7 +384,41 @@ public enum VideoContentQC {
         return out
     }
 
+    private static func fingerprint(pixelBuffer: CVPixelBuffer) throws -> Fingerprint {
+        if let metalFingerprinter {
+            do {
+                return try metalFingerprinter.fingerprint(pixelBuffer: pixelBuffer)
+            } catch {
+                // Fall through to CPU.
+            }
+        }
+
+        // CPU fallback: keep behavior stable by converting to CGImage and reusing existing path.
+        var cg: CGImage?
+        let status = VTCreateCGImageFromCVPixelBuffer(pixelBuffer, options: nil, imageOut: &cg)
+        if status == noErr, let cg {
+            return try fingerprintCPU(cgImage: cg)
+        }
+
+        throw NSError(domain: "MetaVisQC", code: 32, userInfo: [NSLocalizedDescriptionKey: "Failed to compute fingerprint (Metal unavailable + CVPixelBuffer->CGImage conversion failed)"])
+    }
+
     private static func fingerprint(cgImage: CGImage) throws -> Fingerprint {
+        // Prefer Metal path (tiny GPU reduction + tiny readback). Fall back to CPU for environments
+        // without Metal or if the Metal pipeline is unavailable.
+        if let metalFingerprinter {
+            do {
+                let pb = try pixelBuffer(from: cgImage)
+                return try metalFingerprinter.fingerprint(pixelBuffer: pb)
+            } catch {
+                // Fall through to CPU.
+            }
+        }
+
+        return try fingerprintCPU(cgImage: cgImage)
+    }
+
+    private static func fingerprintCPU(cgImage: CGImage) throws -> Fingerprint {
         // Downsample to keep this fast + deterministic.
         let w = 64
         let h = 36

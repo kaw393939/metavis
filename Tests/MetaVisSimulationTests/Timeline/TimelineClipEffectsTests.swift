@@ -5,6 +5,25 @@ import MetaVisTimeline
 @testable import MetaVisSimulation
 
 final class TimelineClipEffectsTests: XCTestCase {
+    func test_timelineCompiler_ignoresIntrinsicEffects() async throws {
+        let clip = Clip(
+            name: "Test",
+            asset: AssetReference(sourceFn: "ligm://source_test_color"),
+            startTime: .zero,
+            duration: Time(seconds: 1.0),
+            effects: [
+                FeatureApplication(id: "mv.retime", parameters: ["factor": .float(2.0)])
+            ]
+        )
+        let track = Track(name: "V1", kind: .video, clips: [clip])
+        let timeline = Timeline(tracks: [track], duration: Time(seconds: 1.0))
+
+        let compiler = TimelineCompiler()
+        let quality = QualityProfile(name: "Test", fidelity: .draft, resolutionHeight: 256, colorDepth: 32)
+
+        _ = try await compiler.compile(timeline: timeline, at: Time(seconds: 0.0), quality: quality)
+    }
+
     func test_timelineCompiler_insertsClipEffectsNodes() async throws {
         let clip = Clip(
             name: "Test",

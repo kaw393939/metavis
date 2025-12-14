@@ -70,8 +70,10 @@ kernel void fx_color_grade_simple(
     if (gid.x >= destTexture.get_width() || gid.y >= destTexture.get_height()) {
         return;
     }
-    
-    float4 color = sourceTexture.sample(coord::normalized, address::clamp_to_edge, filter::linear, (float2(gid) + 0.5) / float2(destTexture.get_width(), destTexture.get_height()));
+
+    constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::linear);
+    float2 uv = (float2(gid) + 0.5) / float2(destTexture.get_width(), destTexture.get_height());
+    float4 color = sourceTexture.sample(s, uv);
     float3 rgb = color.rgb;
     
     // Exposure

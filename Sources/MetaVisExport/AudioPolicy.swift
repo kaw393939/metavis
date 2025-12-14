@@ -1,7 +1,7 @@
 import Foundation
 
 /// Controls whether exported movies should include an audio track.
-public enum AudioPolicy: Sendable, Equatable {
+public enum AudioPolicy: String, Codable, Sendable, Equatable {
     /// Include audio only if the timeline contains audio tracks.
     case auto
 

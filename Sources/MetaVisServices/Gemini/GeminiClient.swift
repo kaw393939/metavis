@@ -31,8 +31,9 @@ public struct GeminiClient: Sendable {
         // Try configured model first; if it 404s, ListModels and retry once.
         do {
             return try await generateContent(body, model: config.model)
-        } catch let GeminiError.http(statusCode, _) where statusCode == 404 {
-            // Many 404s include guidance to call ListModels. Do a single retry with a discovered model.
+        } catch let GeminiError.http(statusCode, _) where statusCode == 404 || statusCode == 400 {
+            // Some environments return 400 INVALID_ARGUMENT for an unavailable/unknown model name
+            // (instead of 404). Do a single retry with a discovered model.
             let resolved = try await resolveGenerateContentModel(preferContains: ["gemini", "flash", "pro"])
             return try await generateContent(body, model: resolved)
         } catch {
@@ -51,8 +52,40 @@ public struct GeminiClient: Sendable {
         request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
+        let snakeBody = try encode(body, style: .snakeCase)
+
+        do {
+            return try await send(request: request, body: snakeBody, fallbackBody: body)
+        } catch let GeminiError.http(statusCode, _) where statusCode == 400 {
+            // Some Gemini endpoints reject snake_case fields like inline_data/mime_type and expect
+            // camelCase inlineData/mimeType. Retry once with an alternate encoding.
+            let camelBody = try encode(body, style: .camelCase)
+            return try await send(request: request, body: camelBody, fallbackBody: nil)
+        }
+    }
+
+    private enum BodyStyle {
+        case snakeCase
+        case camelCase
+    }
+
+    private func encode(_ body: GeminiGenerateContentRequest, style: BodyStyle) throws -> Data {
         let encoder = JSONEncoder()
-        request.httpBody = try encoder.encode(body)
+        switch style {
+        case .snakeCase:
+            return try encoder.encode(body)
+        case .camelCase:
+            return try encoder.encode(CamelCaseGenerateContentRequest(from: body))
+        }
+    }
+
+    private func send(
+        request baseRequest: URLRequest,
+        body: Data,
+        fallbackBody: GeminiGenerateContentRequest?
+    ) async throws -> GeminiGenerateContentResponse {
+        var request = baseRequest
+        request.httpBody = body
 
         let (data, response): (Data, URLResponse)
         do {
@@ -148,5 +181,72 @@ private extension URL {
         existing.append(contentsOf: queryItems)
         components.queryItems = existing
         return components.url ?? self
+    }
+}
+
+// MARK: - CamelCase request fallback
+
+private struct CamelCaseGenerateContentRequest: Encodable {
+    struct Content: Encodable {
+        var role: String?
+        var parts: [Part]
+    }
+
+    enum Part: Encodable {
+        case text(String)
+        case inlineData(mimeType: String, data: String)
+        case fileData(mimeType: String, fileUri: String)
+
+        private enum CodingKeys: String, CodingKey {
+            case text
+            case inlineData
+            case fileData
+        }
+
+        private enum InlineDataKeys: String, CodingKey {
+            case mimeType
+            case data
+        }
+
+        private enum FileDataKeys: String, CodingKey {
+            case mimeType
+            case fileUri
+        }
+
+        func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            switch self {
+            case .text(let text):
+                try container.encode(text, forKey: .text)
+            case .inlineData(let mimeType, let data):
+                var nested = container.nestedContainer(keyedBy: InlineDataKeys.self, forKey: .inlineData)
+                try nested.encode(mimeType, forKey: .mimeType)
+                try nested.encode(data, forKey: .data)
+            case .fileData(let mimeType, let fileUri):
+                var nested = container.nestedContainer(keyedBy: FileDataKeys.self, forKey: .fileData)
+                try nested.encode(mimeType, forKey: .mimeType)
+                try nested.encode(fileUri, forKey: .fileUri)
+            }
+        }
+    }
+
+    var contents: [Content]
+
+    init(from body: GeminiGenerateContentRequest) {
+        self.contents = body.contents.map { content in
+            Content(
+                role: content.role,
+                parts: content.parts.map { part in
+                    switch part {
+                    case .text(let t):
+                        return .text(t)
+                    case .inlineData(let mimeType, let dataBase64):
+                        return .inlineData(mimeType: mimeType, data: dataBase64)
+                    case .fileData(let mimeType, let fileUri):
+                        return .fileData(mimeType: mimeType, fileUri: fileUri)
+                    }
+                }
+            )
+        }
     }
 }

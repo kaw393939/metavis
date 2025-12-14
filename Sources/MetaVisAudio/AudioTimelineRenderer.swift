@@ -19,13 +19,18 @@ public class AudioTimelineRenderer {
         timeRange: Range<Time>,
         sampleRate: Double = 48000,
         maximumFrameCount: AVAudioFrameCount = 4096,
+        reuseChunkBuffer: Bool = false,
         onChunk: (AVAudioPCMBuffer, Time) throws -> Void
     ) throws {
 
-        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
+        let format = try makeStereoFloatFormat(sampleRate: sampleRate)
         let totalFramesDouble = (timeRange.upperBound.seconds - timeRange.lowerBound.seconds) * sampleRate
         let totalFrames = Int64(totalFramesDouble.rounded(.toNearestOrAwayFromZero))
         guard totalFrames > 0 else { return }
+
+        if AudioMixing.timelineRequestsDialogCleanwaterV1(timeline) {
+            masteringChain.applyDialogCleanwaterPresetV1()
+        }
 
         engine.stop()
         engine.reset()
@@ -39,12 +44,29 @@ public class AudioTimelineRenderer {
         try engine.start()
 
         var renderedFrames: Int64 = 0
+
+        // Optional reuse to avoid per-chunk allocations. Only safe when the consumer does not retain the buffer.
+        let scratch: AVAudioPCMBuffer? = {
+            guard reuseChunkBuffer else { return nil }
+            return AVAudioPCMBuffer(pcmFormat: format, frameCapacity: maximumFrameCount)
+        }()
+
         while renderedFrames < totalFrames {
             let remaining = totalFrames - renderedFrames
             let chunkFrames = AVAudioFrameCount(min(Int64(maximumFrameCount), remaining))
 
-            guard let chunk = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames) else {
-                throw RenderError.allocationFailed
+            let chunk: AVAudioPCMBuffer
+            if let scratch {
+                guard scratch.frameCapacity >= chunkFrames else {
+                    throw RenderError.allocationFailed
+                }
+                scratch.frameLength = 0
+                chunk = scratch
+            } else {
+                guard let fresh = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames) else {
+                    throw RenderError.allocationFailed
+                }
+                chunk = fresh
             }
 
             let status = try engine.renderOffline(chunkFrames, to: chunk)
@@ -74,7 +96,7 @@ public class AudioTimelineRenderer {
     /// Renders a chunk of audio for the given time range.
     /// This uses AVAudioEngine's Manual Rendering Mode to pull samples faster (or slower) than real-time.
     public func render(timeline: Timeline, timeRange: Range<Time>, sampleRate: Double = 48000) throws -> AVAudioPCMBuffer? {
-        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
+        let format = try makeStereoFloatFormat(sampleRate: sampleRate)
         let totalFramesDouble = (timeRange.upperBound.seconds - timeRange.lowerBound.seconds) * sampleRate
         let totalFrames = AVAudioFrameCount(totalFramesDouble.rounded(.toNearestOrAwayFromZero))
 
@@ -83,7 +105,7 @@ public class AudioTimelineRenderer {
         }
 
         var writeIndex: AVAudioFrameCount = 0
-        try renderChunks(timeline: timeline, timeRange: timeRange, sampleRate: sampleRate) { chunk, _ in
+        try renderChunks(timeline: timeline, timeRange: timeRange, sampleRate: sampleRate, reuseChunkBuffer: true) { chunk, _ in
             guard let dst = output.floatChannelData, let src = chunk.floatChannelData else { return }
             let frames = Int(chunk.frameLength)
             let channels = Int(format.channelCount)
@@ -96,6 +118,14 @@ public class AudioTimelineRenderer {
         output.frameLength = writeIndex
         return output
     }
+
+    private func makeStereoFloatFormat(sampleRate: Double) throws -> AVAudioFormat {
+        let channels: AVAudioChannelCount = 2
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: channels) else {
+            throw RenderError.formatCreationFailed(sampleRate: sampleRate, channels: channels)
+        }
+        return format
+    }
 }
 
 // Temporary Error stub to avoid module dependency issues if MetaVisPerceptionError isn't available here.
@@ -103,5 +133,6 @@ extension AudioTimelineRenderer {
     enum RenderError: Error {
         case allocationFailed
         case engineFailed
+        case formatCreationFailed(sampleRate: Double, channels: AVAudioChannelCount)
     }
 }

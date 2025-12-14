@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "domain": "audio",
+  "id": "audio.dialogCleanwater.v1",
+  "version": "1.0.0",
+  "name": "Dialog Cleanwater (v1)",
+  "category": "utility",
+  "inputs": [],
+  "parameters": [],
+  "kernelName": ""
+}

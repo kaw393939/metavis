@@ -53,7 +53,7 @@ inline float3 ACES_RRT(float3 acescg) {
 inline float3 ACEScg_to_Rec709_SDR(float3 acescg) {
     float3 rrt = ACES_RRT(acescg);
     float3 linear709 = clamp(rrt, 0.0, 1.0);
-    return Core::Color::Linear_to_sRGB(linear709); // Note: Calling Core::Color namespaced functions if consistent
+    return Linear_to_sRGB(linear709);
 }
 
 // ODT: Rec.2020 (PQ HDR)
@@ -61,7 +61,7 @@ inline float3 ACEScg_to_Rec2020_PQ(float3 acescg, float maxDisplayNits) {
     const float sceneToNitsScale = maxDisplayNits;
     
     // ACEScg -> Rec.2020 Linear
-    float3 rec2020Linear = float3x3(Core::Color::MAT_ACEScg_to_Rec2020) * acescg;
+    float3 rec2020Linear = float3x3(MAT_ACEScg_to_Rec2020) * acescg;
     rec2020Linear = max(rec2020Linear, 0.0);
     
     float3 nits = rec2020Linear * sceneToNitsScale;
@@ -72,7 +72,7 @@ inline float3 ACEScg_to_Rec2020_PQ(float3 acescg, float maxDisplayNits) {
     
     // Normalize for PQ (0-1 where 1 = 10000 nits)
     float3 pqLinear = tonemappedNits / 10000.0; // 0-1
-    return Core::Color::Linear_to_PQ(pqLinear);
+    return Linear_to_PQ(pqLinear);
 }
 
 // MARK: - ACEScct (Logarithmic Encoding)

@@ -11,13 +11,16 @@ import MetaVisSimulation
 public actor VideoExporter: VideoExporting {
     
     private let device: any RenderDevice
+    private let trace: any TraceSink
     
-    public init(engine: MetalSimulationEngine) {
+    public init(engine: MetalSimulationEngine, trace: any TraceSink = NoOpTraceSink()) {
         self.device = MetalRenderDevice(engine: engine)
+        self.trace = trace
     }
 
-    public init(device: any RenderDevice) {
+    public init(device: any RenderDevice, trace: any TraceSink = NoOpTraceSink()) {
         self.device = device
+        self.trace = trace
     }
     
     private nonisolated func logDebug(_ msg: String) {
@@ -57,6 +60,19 @@ public actor VideoExporter: VideoExporting {
         }
 
             try Self.validateExport(quality: quality, governance: governance)
+
+            // Strict feature registry preflight: unknown IDs fail fast.
+            try await ExportPreflight.validateTimelineFeatureIDs(timeline, trace: trace)
+
+            await trace.record(
+                "export.begin",
+                fields: [
+                    "output": outputURL.lastPathComponent,
+                    "quality": quality.name,
+                    "fps": String(frameRate),
+                    "codec": codec.rawValue
+                ]
+            )
         
             logDebug("🎬 [VideoExporter] Export request received for \(outputURL.lastPathComponent)")
             let fileManager = FileManager.default
@@ -180,7 +196,8 @@ public actor VideoExporter: VideoExporting {
                 input: input,
                 audioInput: audioInput,
                 adaptor: adaptor,
-                device: device
+                device: device,
+                trace: trace
             )
             
             await writer.finishWriting()
@@ -202,7 +219,23 @@ public actor VideoExporter: VideoExporting {
                     throw NSError(domain: "MetaVisExport", code: 8, userInfo: [NSLocalizedDescriptionKey: "Too few frames appended: \(counts.videoFramesAppended)/\(expectedFrames)"])
                 }
             }
+
+            await trace.record(
+                "export.end",
+                fields: [
+                    "output": outputURL.lastPathComponent,
+                    "videoFrames": String(counts.videoFramesAppended),
+                    "audioChunks": String(counts.audioChunksAppended)
+                ]
+            )
         } catch {
+            await trace.record(
+                "export.error",
+                fields: [
+                    "output": outputURL.lastPathComponent,
+                    "error": String(describing: error)
+                ]
+            )
             // Avoid leaving behind a tiny/partial container on failure.
             if FileManager.default.fileExists(atPath: outputURL.path) {
                 try? FileManager.default.removeItem(at: outputURL)
@@ -246,7 +279,8 @@ public actor VideoExporter: VideoExporting {
         input: AVAssetWriterInput,
         audioInput: AVAssetWriterInput?,
         adaptor: AVAssetWriterInputPixelBufferAdaptor,
-        device: any RenderDevice
+        device: any RenderDevice,
+        trace: any TraceSink
     ) async throws -> ExportCounts {
         
         let compiler = TimelineCompiler()
@@ -258,6 +292,15 @@ public actor VideoExporter: VideoExporting {
 
         var videoCount = 0
         var audioCount = 0
+
+        await trace.record(
+            "render.video.begin",
+            fields: [
+                "frames": String(expectedFrames),
+                "fps": String(frameRate),
+                "height": String(quality.resolutionHeight)
+            ]
+        )
 
         try await withThrowingTaskGroup(of: (String, Int).self) { group in
 
@@ -325,7 +368,21 @@ public actor VideoExporter: VideoExporting {
                     }
                     
                     let renderTime = Time(seconds: timeSeconds)
+
+                    let shouldTraceFrame = (i == 0) || (i == (totalFrames - 1))
+                    if shouldTraceFrame {
+                        await trace.record(
+                            "render.compile.begin",
+                            fields: ["frame": String(i), "t": String(format: "%.6f", timeSeconds)]
+                        )
+                    }
                     let request = try await compiler.compile(timeline: timeline, at: renderTime, quality: quality)
+                    if shouldTraceFrame {
+                        await trace.record(
+                            "render.compile.end",
+                            fields: ["frame": String(i)]
+                        )
+                    }
                     
                     guard let pixelBufferPool = adaptor.pixelBufferPool else {
                          throw NSError(domain: "MetaVisExport", code: 2, userInfo: [NSLocalizedDescriptionKey: "No Pool"])
@@ -339,7 +396,14 @@ public actor VideoExporter: VideoExporting {
                     }
                     
                     // Render (Actor Call)
+
+                    if shouldTraceFrame {
+                        await trace.record("render.dispatch.begin", fields: ["frame": String(i)])
+                    }
                     try await device.render(request: request, to: buffer, watermark: watermarkSpec)
+                    if shouldTraceFrame {
+                        await trace.record("render.dispatch.end", fields: ["frame": String(i)])
+                    }
                     
                     if !adaptor.append(buffer, withPresentationTime: presentTime) {
                         throw writer.error ?? NSError(domain: "MetaVisExport", code: 4, userInfo: [NSLocalizedDescriptionKey: "Append Failed"])
@@ -361,6 +425,14 @@ public actor VideoExporter: VideoExporting {
                 if kind == "audio" { audioCount = count }
             }
         }
+
+        await trace.record(
+            "render.video.end",
+            fields: [
+                "videoFrames": String(videoCount),
+                "audioChunks": String(audioCount)
+            ]
+        )
 
         return ExportCounts(videoFramesAppended: videoCount, audioChunksAppended: audioCount)
     }
