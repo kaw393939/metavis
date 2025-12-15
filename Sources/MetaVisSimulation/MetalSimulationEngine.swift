@@ -281,30 +281,72 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
         // 2. Wrap CVPixelBuffer in Metal Texture
         let width = CVPixelBufferGetWidth(cvPixelBuffer)
         let height = CVPixelBufferGetHeight(cvPixelBuffer)
-        
+        let pixelFormat = CVPixelBufferGetPixelFormatType(cvPixelBuffer)
+
+        let metalPixelFormat: MTLPixelFormat
+        switch pixelFormat {
+        case kCVPixelFormatType_64RGBAHalf:
+            metalPixelFormat = .rgba16Float
+        case kCVPixelFormatType_32BGRA:
+            metalPixelFormat = .bgra8Unorm
+        default:
+            throw RuntimeError("Unsupported CVPixelBuffer pixel format: \(pixelFormat)")
+        }
+
         var cvMetalTexture: CVMetalTexture?
         let createResult = CVMetalTextureCacheCreateTextureFromImage(
             kCFAllocatorDefault,
             cache,
             cvPixelBuffer,
             nil,
-            .rgba16Float, // Match kCVPixelFormatType_64RGBAHalf (legacy approach)
+            metalPixelFormat,
             width, height,
             0,
             &cvMetalTexture
         )
-        
+
         guard createResult == kCVReturnSuccess,
               let cvTex = cvMetalTexture,
               let mtlTex = CVMetalTextureGetTexture(cvTex) else {
-             throw RuntimeError("Failed to create Metal texture from PixelBuffer")
+            throw RuntimeError("Failed to create Metal texture from PixelBuffer")
         }
-        
-        // 3. Blit (procedural shaders now output BGR directly)
+
+        // 3. Encode into pixel buffer
+        // Use compute kernels instead of blit.copy() since CVMetalTexture-backed textures
+        // may not advertise blit usage and can yield black/undefined results.
         guard let buffer = commandQueue.makeCommandBuffer() else { return }
-        if let blit = buffer.makeBlitCommandEncoder() {
-            blit.copy(from: rootTex, to: mtlTex)
-            blit.endEncoding()
+        if pixelFormat == kCVPixelFormatType_64RGBAHalf {
+            guard let pso = try ensurePipelineState(name: "source_texture") else {
+                throw RuntimeError("Copy shader not available")
+            }
+            guard let encoder = buffer.makeComputeCommandEncoder() else { return }
+            encoder.setComputePipelineState(pso)
+            encoder.setTexture(rootTex, index: 0)
+            encoder.setTexture(mtlTex, index: 1)
+
+            let tw = pso.threadExecutionWidth
+            let th = max(1, pso.maxTotalThreadsPerThreadgroup / tw)
+            encoder.dispatchThreads(
+                MTLSize(width: width, height: height, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: tw, height: th, depth: 1)
+            )
+            encoder.endEncoding()
+        } else if pixelFormat == kCVPixelFormatType_32BGRA {
+            guard let pso = try ensurePipelineState(name: "rgba_to_bgra") else {
+                throw RuntimeError("Format conversion shader not available")
+            }
+            guard let encoder = buffer.makeComputeCommandEncoder() else { return }
+            encoder.setComputePipelineState(pso)
+            encoder.setTexture(rootTex, index: 0)
+            encoder.setTexture(mtlTex, index: 1)
+
+            let tw = pso.threadExecutionWidth
+            let th = max(1, pso.maxTotalThreadsPerThreadgroup / tw)
+            encoder.dispatchThreads(
+                MTLSize(width: width, height: height, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: tw, height: th, depth: 1)
+            )
+            encoder.endEncoding()
         }
 
         if let watermark {
@@ -510,6 +552,25 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
         do {
             let tex = try await clipReader.texture(assetURL: assetURL, timeSeconds: timeSeconds, width: width, height: height)
             textureMap[node.id] = tex
+
+            if abs(timeSeconds) < 0.0000005 {
+                // Diagnostic: sample a single pixel from the decoded source texture.
+                // Only do this for 8-bit formats (float formats require different packing).
+                if tex.pixelFormat == .bgra8Unorm || tex.pixelFormat == .rgba8Unorm {
+                    let px = max(0, min(tex.width - 1, tex.width / 2))
+                    let py = max(0, min(tex.height - 1, tex.height / 2))
+                    var pixel = [UInt8](repeating: 0, count: 4)
+                    tex.getBytes(
+                        &pixel,
+                        bytesPerRow: 4,
+                        from: MTLRegionMake2D(px, py, 1, 1),
+                        mipmapLevel: 0
+                    )
+                    logDebug("🧪 sourceTex t=0 \(assetURL.lastPathComponent) fmt=\(tex.pixelFormat) size=\(tex.width)x\(tex.height) sample(\(px),\(py)) bytes=\(pixel)")
+                } else {
+                    logDebug("🧪 sourceTex t=0 \(assetURL.lastPathComponent) fmt=\(tex.pixelFormat) size=\(tex.width)x\(tex.height) (skip 8-bit sample)")
+                }
+            }
 
             // Opportunistic lookahead (assume ~24fps if unknown).
             clipReader.prefetch(assetURL: assetURL, timeSeconds: timeSeconds + (1.0 / 24.0), width: width, height: height)

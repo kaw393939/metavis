@@ -272,6 +272,21 @@ kernel void idt_rec709_to_acescg(
     dest.write(float4(acescg, pixel.a), gid);
 }
 
+// Input Device Transform: Linear Rec.709 -> ACEScg Linear
+// Used for sources that are already linear (e.g. decoded OpenEXR).
+kernel void idt_linear_rec709_to_acescg(
+    texture2d<float, access::read> source [[texture(0)]],
+    texture2d<float, access::write> dest [[texture(1)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    if (gid.x >= dest.get_width() || gid.y >= dest.get_height()) return;
+
+    float4 pixel = source.read(gid);
+    float3 lin709 = pixel.rgb;
+    float3 acescg = MAT_Rec709_to_ACEScg * lin709;
+    dest.write(float4(acescg, pixel.a), gid);
+}
+
 // Output Device Transform: ACEScg Linear -> sRGB Texture
 // This is the "Exit Gate" for viewing.
 // NOTE: A real RRT+ODT is complex. This is a "Simple ODT" (Clip + Gamma) for the Vertical Slice.
@@ -293,7 +308,8 @@ kernel void odt_acescg_to_rec709(
     // 3. Simple Clamp (SDR)
     srgb = clamp(srgb, 0.0, 1.0);
     
-    dest.write(float4(srgb, pixel.a), gid);
+    // Force opaque alpha for video export pipelines (AVAssetWriter may treat input as premultiplied).
+    dest.write(float4(srgb, 1.0), gid);
 }
 
 // MARK: - Tone Mapping (ACES Fitted)

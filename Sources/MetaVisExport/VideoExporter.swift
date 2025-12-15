@@ -35,6 +35,65 @@ public actor VideoExporter: VideoExporting {
             }
         }
     }
+
+    private static func logPixelBufferSample(_ pixelBuffer: CVPixelBuffer, frameIndex: Int, note: String) {
+        let fmt = CVPixelBufferGetPixelFormatType(pixelBuffer)
+        let w = CVPixelBufferGetWidth(pixelBuffer)
+        let h = CVPixelBufferGetHeight(pixelBuffer)
+
+        let points: [(Int, Int)] = [
+            (0, 0),
+            (max(0, w - 1), 0),
+            (0, max(0, h - 1)),
+            (max(0, w - 1), max(0, h - 1)),
+            (w / 2, h / 2)
+        ]
+
+        func appendLog(_ s: String) {
+            if let d = s.data(using: .utf8), let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/metavis_debug.log")) {
+                handle.seekToEndOfFile(); handle.write(d); try? handle.close()
+            } else {
+                try? s.write(to: URL(fileURLWithPath: "/tmp/metavis_debug.log"), atomically: true, encoding: .utf8)
+            }
+        }
+
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+
+        guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+            appendLog("🧪 Frame \(frameIndex) \(note): no base address\n")
+            return
+        }
+        let bpr = CVPixelBufferGetBytesPerRow(pixelBuffer)
+
+        var lines: [String] = []
+        lines.append("🧪 Frame \(frameIndex) \(note): fmt=\(fmt) \(w)x\(h)\n")
+
+        if fmt == kCVPixelFormatType_32BGRA {
+            for (x, y) in points {
+                let px = max(0, min(w - 1, x))
+                let py = max(0, min(h - 1, y))
+                let p = base.advanced(by: py * bpr + px * 4).assumingMemoryBound(to: UInt8.self)
+                let b = p[0], g = p[1], r = p[2], a = p[3]
+                lines.append("  (\(px),\(py)) BGRA=(\(b),\(g),\(r),\(a))\n")
+            }
+        } else if fmt == kCVPixelFormatType_64RGBAHalf {
+            for (x, y) in points {
+                let px = max(0, min(w - 1, x))
+                let py = max(0, min(h - 1, y))
+                let p = base.advanced(by: py * bpr + px * 8).assumingMemoryBound(to: UInt16.self)
+                let r = Float(Float16(bitPattern: p[0]))
+                let g = Float(Float16(bitPattern: p[1]))
+                let b = Float(Float16(bitPattern: p[2]))
+                let a = Float(Float16(bitPattern: p[3]))
+                lines.append(String(format: "  (%d,%d) RGBAh=(%.4f,%.4f,%.4f,%.4f)\n", px, py, r, g, b, a))
+            }
+        } else {
+            lines.append("  (unsupported pixel format)\n")
+        }
+
+        appendLog(lines.joined())
+    }
     
     /// Exports the timeline to the specified URL.
     /// - Parameters:
@@ -83,43 +142,53 @@ public actor VideoExporter: VideoExporting {
         // 1. Setup Asset Writer
             let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
         
-        // 10-bit Support
-        // Use 64-bit RGBA Half (Float16) format to match legacy MetaVis implementation
-        // This provides sufficient precision for scene-linear values
+        // Pixel buffer format
+        // - HEVC: use BGRA for broad AVFoundation/VideoToolbox compatibility.
+        //   (RGBAHalf has been observed to yield black frames in some CLI export paths.)
+        // - ProRes: keep RGBAHalf for higher-precision workflows.
             let is10Bit = quality.colorDepth >= 10
-            let pixelFormat = kCVPixelFormatType_64RGBAHalf  // 16-bit float RGBA
+            let pixelFormat: OSType
+            if codec == .hevc {
+                pixelFormat = kCVPixelFormatType_32BGRA
+            } else {
+                pixelFormat = kCVPixelFormatType_64RGBAHalf
+            }
         
         // Compression Settings
               var compressionProperties: [String: Any] = [:]
-              if is10Bit && codec == .hevc {
-                  // Note: Using 16-bit float input with 10-bit HEVC codec
-                  compressionProperties[AVVideoProfileLevelKey] = kVTProfileLevel_HEVC_Main10_AutoLevel
+              if codec == .hevc {
+                  if is10Bit {
+                      // If callers request 10-bit, prefer Main10. (Input is still BGRA; encoder may upconvert.)
+                      compressionProperties[AVVideoProfileLevelKey] = kVTProfileLevel_HEVC_Main10_AutoLevel
+                  }
+
+                  // Ensure a sane bitrate floor so very short exports aren't tiny.
+                  let width = quality.resolutionHeight * 16 / 9
+                  let height = quality.resolutionHeight
+                  let fps = max(1, Int(frameRate))
+                  let estimatedBitrate = Int(Double(width * height * fps) * 0.08) // ~0.08 bpp for HEVC
+                  let targetBitrate = max(8_000_000, estimatedBitrate)
+
+                  // AVFoundation keys
+                  compressionProperties[AVVideoAverageBitRateKey] = targetBitrate
+                  compressionProperties[AVVideoExpectedSourceFrameRateKey] = fps
+                  compressionProperties[AVVideoMaxKeyFrameIntervalKey] = fps
+
+                  // VideoToolbox keys (some encoders honor these more reliably)
+                  compressionProperties[kVTCompressionPropertyKey_AverageBitRate as String] = targetBitrate
+                  compressionProperties[kVTCompressionPropertyKey_ExpectedFrameRate as String] = fps
+                  compressionProperties[kVTCompressionPropertyKey_MaxKeyFrameInterval as String] = fps
+                  compressionProperties[kVTCompressionPropertyKey_DataRateLimits as String] = [targetBitrate / 8, 1]
               }
-
-                        // Ensure a sane bitrate floor so very short exports aren't tiny.
-                        let width = quality.resolutionHeight * 16 / 9
-                        let height = quality.resolutionHeight
-                        let fps = max(1, Int(frameRate))
-                        let estimatedBitrate = Int(Double(width * height * fps) * 0.08) // ~0.08 bpp for HEVC
-                        let targetBitrate = max(8_000_000, estimatedBitrate)
-
-                        // AVFoundation keys
-                        compressionProperties[AVVideoAverageBitRateKey] = targetBitrate
-                        compressionProperties[AVVideoExpectedSourceFrameRateKey] = fps
-                        compressionProperties[AVVideoMaxKeyFrameIntervalKey] = fps
-
-                        // VideoToolbox keys (some encoders honor these more reliably)
-                        compressionProperties[kVTCompressionPropertyKey_AverageBitRate as String] = targetBitrate
-                        compressionProperties[kVTCompressionPropertyKey_ExpectedFrameRate as String] = fps
-                        compressionProperties[kVTCompressionPropertyKey_MaxKeyFrameInterval as String] = fps
-                        compressionProperties[kVTCompressionPropertyKey_DataRateLimits as String] = [targetBitrate / 8, 1]
         
-            let outputSettings: [String: Any] = [
+            var outputSettings: [String: Any] = [
                 AVVideoCodecKey: codec,
                 AVVideoWidthKey: quality.resolutionHeight * 16 / 9, // Assuming 16:9 aspect
-                AVVideoHeightKey: quality.resolutionHeight,
-                AVVideoCompressionPropertiesKey: compressionProperties
+                AVVideoHeightKey: quality.resolutionHeight
             ]
+            if !compressionProperties.isEmpty {
+                outputSettings[AVVideoCompressionPropertiesKey] = compressionProperties
+            }
         
         // Video Input
             let input = AVAssetWriterInput(mediaType: .video, outputSettings: outputSettings)
@@ -131,7 +200,9 @@ public actor VideoExporter: VideoExporting {
                 sourcePixelBufferAttributes: [
                     kCVPixelBufferPixelFormatTypeKey as String: pixelFormat,
                     kCVPixelBufferWidthKey as String: quality.resolutionHeight * 16 / 9,
-                    kCVPixelBufferHeightKey as String: quality.resolutionHeight
+                    kCVPixelBufferHeightKey as String: quality.resolutionHeight,
+                    kCVPixelBufferMetalCompatibilityKey as String: true,
+                    kCVPixelBufferIOSurfacePropertiesKey as String: [:]
                 ]
             )
         
@@ -270,6 +341,67 @@ public actor VideoExporter: VideoExporting {
         let audioChunksAppended: Int
     }
 
+    private nonisolated static func awaitReadyForMoreMediaData(
+        _ input: AVAssetWriterInput,
+        writer: AVAssetWriter,
+        kind: String,
+        timeoutSeconds: Double = 60.0
+    ) async throws {
+        let start = DispatchTime.now().uptimeNanoseconds
+        let timeoutNanos = UInt64(max(0.0, timeoutSeconds) * 1_000_000_000.0)
+
+        while !input.isReadyForMoreMediaData {
+            if writer.status != .writing {
+                throw writer.error ?? NSError(
+                    domain: "MetaVisExport",
+                    code: 31,
+                    userInfo: [NSLocalizedDescriptionKey: "Writer not writing while waiting for \(kind) input readiness: \(writer.status.rawValue)"]
+                )
+            }
+
+            let now = DispatchTime.now().uptimeNanoseconds
+            if now &- start > timeoutNanos {
+                throw writer.error ?? NSError(
+                    domain: "MetaVisExport",
+                    code: 32,
+                    userInfo: [NSLocalizedDescriptionKey: "Timed out after \(String(format: "%.2f", timeoutSeconds))s waiting for \(kind) input readiness"]
+                )
+            }
+
+            try await Task.sleep(nanoseconds: 5_000_000) // 5ms
+        }
+    }
+
+    private nonisolated static func waitReadyForMoreMediaDataSync(
+        _ input: AVAssetWriterInput,
+        writer: AVAssetWriter,
+        kind: String,
+        timeoutSeconds: Double = 60.0
+    ) throws {
+        let start = DispatchTime.now().uptimeNanoseconds
+        let timeoutNanos = UInt64(max(0.0, timeoutSeconds) * 1_000_000_000.0)
+
+        while !input.isReadyForMoreMediaData {
+            if writer.status != .writing {
+                throw writer.error ?? NSError(
+                    domain: "MetaVisExport",
+                    code: 33,
+                    userInfo: [NSLocalizedDescriptionKey: "Writer not writing while waiting for \(kind) input readiness: \(writer.status.rawValue)"]
+                )
+            }
+
+            let now = DispatchTime.now().uptimeNanoseconds
+            if now &- start > timeoutNanos {
+                throw writer.error ?? NSError(
+                    domain: "MetaVisExport",
+                    code: 34,
+                    userInfo: [NSLocalizedDescriptionKey: "Timed out after \(String(format: "%.2f", timeoutSeconds))s waiting for \(kind) input readiness"]
+                )
+            }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+    }
+
     private nonisolated func runParallelExport(
         timeline: Timeline,
         quality: QualityProfile,
@@ -324,9 +456,7 @@ public actor VideoExporter: VideoExporting {
                         maximumFrameCount: 4096
                     ) { pcmBuffer, _ in
                         // Backpressure
-                        while !audioInput.isReadyForMoreMediaData {
-                            Thread.sleep(forTimeInterval: 0.001)
-                        }
+                        try VideoExporter.waitReadyForMoreMediaDataSync(audioInput, writer: writer, kind: "audio")
 
                         if writer.status != .writing {
                             throw writer.error ?? NSError(domain: "MetaVisExport", code: 14, userInfo: [NSLocalizedDescriptionKey: "Writer not writing during audio encode: \(writer.status.rawValue)"])
@@ -354,6 +484,12 @@ public actor VideoExporter: VideoExporting {
                 
                 let totalFrames = expectedFrames
                 var appended = 0
+
+                let progressStride: Int = {
+                    // Emit at most ~120 progress events per export.
+                    let stride = max(1, totalFrames / 120)
+                    return stride
+                }()
                 
                 for i in 0..<totalFrames {
                     if writer.status != .writing {
@@ -363,9 +499,7 @@ public actor VideoExporter: VideoExporting {
                     let presentTime = CMTime(value: CMTimeValue(i), timescale: Int32(frameRate))
                     
                     // Throttle
-                    while !input.isReadyForMoreMediaData {
-                        try await Task.sleep(nanoseconds: 10_000_000)
-                    }
+                    try await VideoExporter.awaitReadyForMoreMediaData(input, writer: writer, kind: "video")
                     
                     let renderTime = Time(seconds: timeSeconds)
 
@@ -404,12 +538,26 @@ public actor VideoExporter: VideoExporting {
                     if shouldTraceFrame {
                         await trace.record("render.dispatch.end", fields: ["frame": String(i)])
                     }
+
+                    if i == 0 {
+                        VideoExporter.logPixelBufferSample(buffer, frameIndex: i, note: "pre-append")
+                    }
                     
                     if !adaptor.append(buffer, withPresentationTime: presentTime) {
                         throw writer.error ?? NSError(domain: "MetaVisExport", code: 4, userInfo: [NSLocalizedDescriptionKey: "Append Failed"])
                     }
 
                     appended += 1
+
+                    if i % progressStride == 0 {
+                        await trace.record(
+                            "render.video.progress",
+                            fields: [
+                                "frame": String(i),
+                                "totalFrames": String(totalFrames)
+                            ]
+                        )
+                    }
                     
                     if i % 24 == 0 { 
                         let msg = "📹 Video Frame \(i)/\(totalFrames)\n"

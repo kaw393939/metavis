@@ -4,6 +4,16 @@ This sprint is planning-only. The goal is to record testable acceptance criteria
 
 ## Candidate no-mock E2E tests (future)
 
+### 0) `EXRReferenceE2ETests.test_exr_is_native_reference_format()`
+- Fixture: one or more EXR reference images/sequences (scene-linear ACEScg), including HDR values > 1.0.
+- Run: ingest → render (passthrough graph) → frame-dump back to EXR.
+- Assert: values > 1.0 preserved within half-float quantization tolerance; dimensions unchanged; channel semantics correct.
+
+### 0b) `EXRSafetyContractTests.test_non_finite_values_are_sanitized()`
+- Fixture: synthetic EXR containing NaN/Inf and huge finite magnitudes.
+- Run: ingest → render (passthrough) → readback.
+- Assert: NaN/Inf become finite (policy-defined, e.g. 0); huge finite values clamp to Float16 range before GPU work.
+
 ### 1) `IngestE2ETests.test_folder_drop_import_builds_timeline()`
 - Deterministic test data: generated media (procedural video/audio) + synthetic metadata files.
 - Contract: dropping files into an ingest directory triggers import, integrity checks, and timeline assembly.

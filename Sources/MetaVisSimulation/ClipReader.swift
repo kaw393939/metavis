@@ -4,6 +4,7 @@ import Metal
 import CoreVideo
 import CoreMedia
 import CoreImage
+import MetaVisCore
 
 /// Minimal, caching video frame reader that produces Metal textures.
 ///
@@ -42,8 +43,8 @@ actor ClipReader {
     }
 
     private struct CachedFrame {
-        let pixelBuffer: CVPixelBuffer
-        let cvMetalTexture: CVMetalTexture
+        let pixelBuffer: CVPixelBuffer?
+        let cvMetalTexture: CVMetalTexture?
         let texture: MTLTexture
     }
 
@@ -189,6 +190,8 @@ actor ClipReader {
 
     private var decoders: [DecoderKey: DecoderState] = [:]
 
+    private var stillPixelBuffers: [DecoderKey: CVPixelBuffer] = [:]
+
     private var cache: [Key: CachedFrame] = [:]
     private var cacheOrder: [Key] = []
 
@@ -255,21 +258,35 @@ actor ClipReader {
             throw ClipReaderError.cannotCreateMetalTexture
         }
 
-        let decoderKey = DecoderKey(assetURL: assetURL.absoluteString, width: width, height: height)
-        let decoder: DecoderState
-        if let existing = decoders[decoderKey] {
-            decoder = existing
-        } else {
-            decoder = try await DecoderState(assetURL: assetURL, width: width, height: height)
-            decoders[decoderKey] = decoder
-        }
+        let isEXR = assetURL.pathExtension.lowercased() == "exr"
 
-        let requestTime = CMTime(seconds: timeSeconds, preferredTimescale: 600)
-        let sample = try decoder.readSample(closestTo: requestTime)
-        guard let imageBuffer = CMSampleBufferGetImageBuffer(sample) else {
-            throw ClipReaderError.noImageBuffer
+        let decodedPixelBuffer: CVPixelBuffer
+        if isEXR {
+            let stillKey = DecoderKey(assetURL: assetURL.absoluteString, width: width, height: height)
+            if let cached = stillPixelBuffers[stillKey] {
+                decodedPixelBuffer = cached
+            } else {
+                let pb = try FFmpegEXRDecoder.decodeFirstFrameRGBAHalf(exrURL: assetURL, width: width, height: height)
+                stillPixelBuffers[stillKey] = pb
+                decodedPixelBuffer = pb
+            }
+        } else {
+            let decoderKey = DecoderKey(assetURL: assetURL.absoluteString, width: width, height: height)
+            let decoder: DecoderState
+            if let existing = decoders[decoderKey] {
+                decoder = existing
+            } else {
+                decoder = try await DecoderState(assetURL: assetURL, width: width, height: height)
+                decoders[decoderKey] = decoder
+            }
+
+            let requestTime = CMTime(seconds: timeSeconds, preferredTimescale: 600)
+            let sample = try decoder.readSample(closestTo: requestTime)
+            guard let imageBuffer = CMSampleBufferGetImageBuffer(sample) else {
+                throw ClipReaderError.noImageBuffer
+            }
+            decodedPixelBuffer = imageBuffer
         }
-        let decodedPixelBuffer = imageBuffer
 
         let pbW = CVPixelBufferGetWidth(decodedPixelBuffer)
         let pbH = CVPixelBufferGetHeight(decodedPixelBuffer)
@@ -277,28 +294,64 @@ actor ClipReader {
         if pbW == width && pbH == height {
             pixelBuffer = decodedPixelBuffer
         } else {
+            if isEXR {
+                // EXR decode should already be at the requested size.
+                // Avoid CI-based scaling here because it would quantize/convert pixel formats.
+                throw ClipReaderError.cannotStartReading("EXR decode returned unexpected dimensions: \(pbW)x\(pbH) (expected \(width)x\(height))")
+            }
+
             // Some sources ignore the requested composition renderSize. Scale deterministically to the
             // engine's working size so `source_texture` can read within bounds.
             pixelBuffer = try scale(pixelBuffer: decodedPixelBuffer, toWidth: width, height: height)
         }
 
-        var cvMetalTex: CVMetalTexture?
-        let createResult = CVMetalTextureCacheCreateTextureFromImage(
-            kCFAllocatorDefault,
-            cache,
-            pixelBuffer,
-            nil,
-            .bgra8Unorm,
-            width,
-            height,
-            0,
-            &cvMetalTex
-        )
+        let mtlTex: MTLTexture
+        var cvTex: CVMetalTexture?
 
-        guard createResult == kCVReturnSuccess,
-              let cvTex = cvMetalTex,
-              let mtlTex = CVMetalTextureGetTexture(cvTex) else {
-            throw ClipReaderError.cannotCreateMetalTexture
+        if isEXR {
+            var cvMetalTex: CVMetalTexture?
+            let createResult = CVMetalTextureCacheCreateTextureFromImage(
+                kCFAllocatorDefault,
+                cache,
+                pixelBuffer,
+                nil,
+                .rgba16Float,
+                width,
+                height,
+                0,
+                &cvMetalTex
+            )
+
+            guard createResult == kCVReturnSuccess,
+                  let cvMetalTex,
+                  let tex = CVMetalTextureGetTexture(cvMetalTex) else {
+                throw ClipReaderError.cannotCreateMetalTexture
+            }
+
+            cvTex = cvMetalTex
+            mtlTex = tex
+        } else {
+            var cvMetalTex: CVMetalTexture?
+            let createResult = CVMetalTextureCacheCreateTextureFromImage(
+                kCFAllocatorDefault,
+                cache,
+                pixelBuffer,
+                nil,
+                .bgra8Unorm,
+                width,
+                height,
+                0,
+                &cvMetalTex
+            )
+
+            guard createResult == kCVReturnSuccess,
+                  let cvMetalTex,
+                  let tex = CVMetalTextureGetTexture(cvMetalTex) else {
+                throw ClipReaderError.cannotCreateMetalTexture
+            }
+
+            cvTex = cvMetalTex
+            mtlTex = tex
         }
 
         let frame = CachedFrame(pixelBuffer: pixelBuffer, cvMetalTexture: cvTex, texture: mtlTex)
@@ -314,7 +367,8 @@ actor ClipReader {
             kCVPixelBufferHeightKey: height,
             kCVPixelBufferCGImageCompatibilityKey: true,
             kCVPixelBufferCGBitmapContextCompatibilityKey: true,
-            kCVPixelBufferMetalCompatibilityKey: true
+            kCVPixelBufferMetalCompatibilityKey: true,
+            kCVPixelBufferIOSurfacePropertiesKey: [:]
         ]
 
         let status = CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, attrs as CFDictionary, &out)
@@ -351,5 +405,160 @@ actor ClipReader {
             let evicted = cacheOrder.removeFirst()
             cache.removeValue(forKey: evicted)
         }
+    }
+}
+
+// MARK: - EXR decoding (ffmpeg-based)
+
+private enum FFmpegEXRDecoder {
+    enum DecodeError: Error, LocalizedError {
+        case ffprobeFailed(String)
+        case ffmpegFailed(String)
+        case invalidProbeOutput
+        case invalidDimensions
+        case unexpectedByteCount(expected: Int, got: Int)
+        case cannotCreatePixelBuffer(OSStatus)
+
+        var errorDescription: String? {
+            switch self {
+            case .ffprobeFailed(let msg): return "ffprobe failed: \(msg)"
+            case .ffmpegFailed(let msg): return "ffmpeg failed: \(msg)"
+            case .invalidProbeOutput: return "ffprobe returned unexpected output"
+            case .invalidDimensions: return "ffprobe returned invalid dimensions"
+            case .unexpectedByteCount(let expected, let got): return "ffmpeg raw output size mismatch (expected \(expected) bytes, got \(got) bytes)"
+            case .cannotCreatePixelBuffer(let status): return "CVPixelBufferCreate failed (\(status))"
+            }
+        }
+    }
+
+    static func decodeFirstFrameRGBAHalf(exrURL: URL, width w: Int, height h: Int) throws -> CVPixelBuffer {
+        guard w > 0, h > 0 else { throw DecodeError.invalidDimensions }
+
+        // NOTE: We intentionally avoid piping rawvideo through stdout here.
+        // In practice, larger frames (e.g. 1280x720+) can intermittently hang/timeout
+        // when captured via pipes, causing the engine to fall back to black.
+        // Writing to a temporary file is slower in theory but far more robust and
+        // only happens once per EXR+resolution due to ClipReader caching.
+        let tmpURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("metavis_exr_\(UUID().uuidString).rgba128le")
+        defer { try? FileManager.default.removeItem(at: tmpURL) }
+
+        let raw = try runFFmpegAndReadFile(
+            args: [
+                "-nostdin",
+                "-y",
+                "-v", "error",
+                "-i", exrURL.path,
+                "-frames:v", "1",
+                "-vf", "scale=\(w):\(h):flags=bicubic,format=gbrapf32le",
+                "-f", "rawvideo",
+                "-pix_fmt", "gbrapf32le",
+                tmpURL.path
+            ],
+            timeoutSeconds: 20.0
+        )
+
+        let expectedBytes = w * h * 16 // 4 * Float32
+        guard raw.count >= expectedBytes else {
+            throw DecodeError.unexpectedByteCount(expected: expectedBytes, got: raw.count)
+        }
+
+        // Convert float32 RGBA -> float16 RGBA (sanitized) into a CVPixelBuffer.
+        var pb: CVPixelBuffer?
+        let attrs: [CFString: Any] = [
+            kCVPixelBufferCGImageCompatibilityKey: true,
+            kCVPixelBufferCGBitmapContextCompatibilityKey: true,
+            kCVPixelBufferMetalCompatibilityKey: true,
+            kCVPixelBufferIOSurfacePropertiesKey: [:]
+        ]
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            w,
+            h,
+            kCVPixelFormatType_64RGBAHalf,
+            attrs as CFDictionary,
+            &pb
+        )
+        guard status == kCVReturnSuccess, let pb else {
+            throw DecodeError.cannotCreatePixelBuffer(status)
+        }
+
+        CVPixelBufferLockBaseAddress(pb, [])
+        defer { CVPixelBufferUnlockBaseAddress(pb, []) }
+
+        guard let base = CVPixelBufferGetBaseAddress(pb) else {
+            throw DecodeError.cannotCreatePixelBuffer(-1)
+        }
+
+        let dstBytesPerRow = CVPixelBufferGetBytesPerRow(pb)
+        let dstHalfBytesPerRow = w * 8 // 4 * Float16
+        guard dstBytesPerRow >= dstHalfBytesPerRow else {
+            throw DecodeError.cannotCreatePixelBuffer(-2)
+        }
+
+        raw.prefix(expectedBytes).withUnsafeBytes { srcRaw in
+            let srcFloats = srcRaw.bindMemory(to: Float.self)
+            let planeSize = w * h
+            let gOff = 0 * planeSize
+            let bOff = 1 * planeSize
+            let rOff = 2 * planeSize
+            let aOff = 3 * planeSize
+
+            for y in 0..<h {
+                let dstRow = base.advanced(by: y * dstBytesPerRow)
+                let dst = dstRow.bindMemory(to: UInt16.self, capacity: w * 4)
+                for x in 0..<w {
+                    let p = (y * w + x)
+                    let r = ColorScienceReference.sanitizeFinite(srcFloats[rOff + p])
+                    let g = ColorScienceReference.sanitizeFinite(srcFloats[gOff + p])
+                    let b = ColorScienceReference.sanitizeFinite(srcFloats[bOff + p])
+                    let a = ColorScienceReference.sanitizeFinite(srcFloats[aOff + p])
+
+                    dst[(x * 4) + 0] = Float16(r).bitPattern
+                    dst[(x * 4) + 1] = Float16(g).bitPattern
+                    dst[(x * 4) + 2] = Float16(b).bitPattern
+                    dst[(x * 4) + 3] = Float16(a).bitPattern
+                }
+            }
+        }
+
+        return pb
+    }
+
+    private static func runFFmpegAndReadFile(args: [String], timeoutSeconds: Double) throws -> Data {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        p.arguments = ["ffmpeg"] + args
+
+        let errPipe = Pipe()
+        p.standardError = errPipe
+
+        try p.run()
+
+        let start = Date()
+        while p.isRunning {
+            if Date().timeIntervalSince(start) > timeoutSeconds {
+                p.terminate()
+                // Give ffmpeg a moment to exit.
+                Thread.sleep(forTimeInterval: 0.05)
+                throw DecodeError.ffmpegFailed("ffmpeg timed out after \(timeoutSeconds)s")
+            }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+
+        p.waitUntilExit()
+
+        let err = errPipe.fileHandleForReading.readDataToEndOfFile()
+        guard p.terminationStatus == 0 else {
+            let msg = (String(data: err, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            throw DecodeError.ffmpegFailed(msg.isEmpty ? "ffmpeg failed" : msg)
+        }
+
+        // The last arg is the output file path.
+        guard let outPath = p.arguments?.last else {
+            throw DecodeError.ffmpegFailed("ffmpeg produced no output path")
+        }
+        let outURL = URL(fileURLWithPath: outPath)
+        return try Data(contentsOf: outURL)
     }
 }

@@ -7,6 +7,8 @@ Task {
     do {
         try await MetaVisLabProgram.run(args: args)
         exit(0)
+    } catch MetaVisLabExit.success {
+        exit(0)
     } catch {
         fputs("MetaVisLab failed: \(error)\n", stderr)
         exit(1)

@@ -65,9 +65,14 @@ public struct TimelineCompiler {
 
             // Enforce a consistent working space (ACEScg) by inserting an IDT before compositing.
             // This is part of the "golden thread" assumptions across the simulation pipeline.
+            let isEXR: Bool = {
+                if clip.asset.sourceFn.lowercased().hasSuffix(".exr") { return true }
+                if let u = URL(string: clip.asset.sourceFn), u.pathExtension.lowercased() == "exr" { return true }
+                return false
+            }()
             let idtNode = RenderNode(
                 name: "IDT_Input",
-                shader: "idt_rec709_to_acescg",
+                shader: isEXR ? "idt_linear_rec709_to_acescg" : "idt_rec709_to_acescg",
                 inputs: ["input": sourceNode.id]
             )
             nodes.append(idtNode)

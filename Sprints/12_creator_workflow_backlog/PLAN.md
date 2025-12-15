@@ -17,6 +17,25 @@ Enable a solo creator to:
 - Privacy by default: no raw media leaves the machine unless explicitly enabled per project.
 - “Pro for everyone”: ship opinionated, best-practice engineering defaults (sound + picture).
 
+## Current scope (deliberately narrow)
+- **Primary capture device**: iPhone 16 Pro Max.
+- **Native / reference image format**: **OpenEXR** (scene-linear **ACEScg**). This is the “truth” format for internal frame dumps, deterministic reference renders, and loss-minimized project chaining.
+- **Other I/O is edge quality**: all other inputs/outputs are treated as quality tiers below EXR and may involve quantization, gamut/transfer transforms, or metadata loss.
+- **In-scope inputs (for now)**:
+  - OpenEXR image sequences (reference fixtures + internal interchange).
+  - iPhone-origin HDR video at highest quality settings (HEVC 10-bit HDR and/or ProRes variants where present).
+- **Out of scope (for now)**: other cameras/devices, RAW workflows, arbitrary codec zoo support.
+
+## Format contracts (testable)
+- **ACEScg at the door**: all image/video inputs must be converted into scene-linear ACEScg as early as possible.
+- **HDR preservation**: values > 1.0 are valid and must be preserved through ingest → render → EXR dump.
+- **Non-finite safety**: NaN/Inf must be sanitized to finite values before any GPU compositing/export steps.
+- **Deterministic preview**: SDR previews are deterministic transforms from the scene-linear pipeline (never “mystery tone mapping”).
+- **Quality ladder**:
+  - **Tier 0 (reference)**: EXR (ACEScg, scene-linear) — loss-minimized, used for truth + tests.
+  - **Tier 1 (capture edge)**: iPhone HDR video — preserved as faithfully as practical.
+  - **Tier 2 (deliverables edge)**: platform codecs — optimized for compatibility, explicitly lower fidelity than EXR.
+
 ## Backlog themes
 
 ### 0) Science data → VFX templates (JWST/FITS)
@@ -40,7 +59,7 @@ Pipeline autopsy: `Docs/research_notes/metavis3_fits_jwst_export_autopsy.md`
 - Ingest: robust handling of iPhone-origin footage at highest quality settings (HEVC 10-bit HDR and/or ProRes variants where present)
 - Metadata: extract + persist per-asset color metadata (primaries, transfer function, matrix, full-range flag), audio metadata (channels/layout, sample rate), and rotation/orientation
 - Variable frame rate: detect and normalize VFR footage into a stable timeline timebase (preserve A/V sync)
-- HDR handling: preserve HDR throughout pipeline (scene-referred working space) and provide deterministic SDR preview path
+- HDR handling: preserve HDR throughout pipeline (scene-linear ACEScg working space) and provide deterministic SDR preview path
 - Log capture handling: support camera log encodings when present (require explicit input transform selection)
 - Timecode/timestamps: preserve capture time and stable sort order for multi-take sessions
 - Spatial audio: preserve multichannel/spatial tracks where present (at minimum: don’t drop channels)

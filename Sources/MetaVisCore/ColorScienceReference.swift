@@ -52,6 +52,35 @@ public struct ColorScienceReference {
         if v <= 0.0031308 { return 12.92 * v }
         return 1.055 * pow(v, 1.0/2.4) - 0.055
     }
+
+    // MARK: - Sanitization
+
+    /// Sanitizes scene-linear values for GPU processing.
+    /// - Replaces NaN/Inf with 0
+    /// - Clamps finite magnitudes to a configurable limit (defaults to Float16 range)
+    public static func sanitizeFinite(_ v: Float, maxMagnitude: Float = Float(Float16.greatestFiniteMagnitude)) -> Float {
+        guard v.isFinite else { return 0 }
+        if v > maxMagnitude { return maxMagnitude }
+        if v < -maxMagnitude { return -maxMagnitude }
+        return v
+    }
+
+    public static func sanitizeFinite(_ rgb: SIMD3<Float>, maxMagnitude: Float = Float(Float16.greatestFiniteMagnitude)) -> SIMD3<Float> {
+        SIMD3<Float>(
+            sanitizeFinite(rgb.x, maxMagnitude: maxMagnitude),
+            sanitizeFinite(rgb.y, maxMagnitude: maxMagnitude),
+            sanitizeFinite(rgb.z, maxMagnitude: maxMagnitude)
+        )
+    }
+
+    public static func sanitizeFinite(_ rgba: SIMD4<Float>, maxMagnitude: Float = Float(Float16.greatestFiniteMagnitude)) -> SIMD4<Float> {
+        SIMD4<Float>(
+            sanitizeFinite(rgba.x, maxMagnitude: maxMagnitude),
+            sanitizeFinite(rgba.y, maxMagnitude: maxMagnitude),
+            sanitizeFinite(rgba.z, maxMagnitude: maxMagnitude),
+            sanitizeFinite(rgba.w, maxMagnitude: maxMagnitude)
+        )
+    }
     
     // MARK: - Pipelines
     
