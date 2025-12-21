@@ -1,5 +1,21 @@
 import Foundation
 
+public enum FeatureRegistryValidationError: Error, LocalizedError, Sendable, Equatable {
+    case validationFailed(errors: [FeatureManifestValidationError])
+    case registryKeyMismatch(expectedID: String, manifestID: String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .validationFailed(let errors):
+            if errors.isEmpty { return "FeatureRegistry validation failed" }
+            let first = errors.prefix(5).map { "\($0.code):\($0.message)" }.joined(separator: " | ")
+            return "FeatureRegistry validation failed (\(errors.count) errors): \(first)"
+        case .registryKeyMismatch(let expectedID, let manifestID):
+            return "FeatureRegistry internal key mismatch: expected '\(expectedID)' but manifest.id was '\(manifestID)'"
+        }
+    }
+}
+
 /// A centralized registry for managing available features (effects/shaders).
 /// Thread-safe actor.
 public actor FeatureRegistry {
@@ -40,5 +56,36 @@ public actor FeatureRegistry {
     /// Remove a feature
     public func unregister(id: String) {
         features.removeValue(forKey: id)
+    }
+
+    /// Validates all registered manifests.
+    ///
+    /// This is intended as a safety belt for startup/bootstrapping: it catches invalid manifests
+    /// that might have been registered programmatically (not via the bundle loader).
+    public func validateRegistry() throws {
+        // Ensure dictionary keys match manifest ids.
+        for (k, v) in features {
+            if k != v.id {
+                throw FeatureRegistryValidationError.registryKeyMismatch(expectedID: k, manifestID: v.id)
+            }
+        }
+
+        // Deterministic ordering and stable error surface.
+        let manifests = features.values.sorted(by: { $0.id < $1.id })
+        var errors: [FeatureManifestValidationError] = []
+        for m in manifests {
+            errors.append(contentsOf: FeatureManifestValidator.validateForRegistryLoad(m))
+        }
+
+        // Stable error ordering.
+        errors.sort {
+            if $0.featureID != $1.featureID { return ($0.featureID ?? "") < ($1.featureID ?? "") }
+            if $0.code != $1.code { return $0.code < $1.code }
+            return $0.message < $1.message
+        }
+
+        if !errors.isEmpty {
+            throw FeatureRegistryValidationError.validationFailed(errors: errors)
+        }
     }
 }

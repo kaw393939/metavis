@@ -20,14 +20,41 @@ public enum AudioMixing {
         return clip.alpha(at: Time(seconds: timelineSeconds))
     }
 
-    public static func timelineRequestsDialogCleanwaterV1(_ timeline: Timeline) -> Bool {
+    public struct DialogCleanwaterRequest: Sendable, Equatable {
+        public var globalGainDB: Float
+        public init(globalGainDB: Float) {
+            self.globalGainDB = globalGainDB
+        }
+    }
+
+    public static func dialogCleanwaterV1Request(for timeline: Timeline) -> DialogCleanwaterRequest? {
+        // Deterministic selection rule: take the smallest requested gain across all clips.
+        // This is a safety-first merge and avoids order dependence.
+        var minGain: Float?
+
         for track in timeline.tracks where track.kind == .audio {
             for clip in track.clips {
-                if clip.effects.contains(where: { $0.id == "audio.dialogCleanwater.v1" }) {
-                    return true
+                guard let fx = clip.effects.first(where: { $0.id == "audio.dialogCleanwater.v1" }) else { continue }
+
+                // Default gain if parameter omitted.
+                var requested: Float = 6.0
+                if let v = fx.parameters["globalGainDB"], case .float(let f) = v {
+                    requested = Float(f)
+                }
+
+                if let cur = minGain {
+                    minGain = min(cur, requested)
+                } else {
+                    minGain = requested
                 }
             }
         }
-        return false
+
+        if let minGain {
+            // Clamp defensively to match preset expectations.
+            let clamped = min(max(minGain, 0.0), 6.0)
+            return DialogCleanwaterRequest(globalGainDB: clamped)
+        }
+        return nil
     }
 }

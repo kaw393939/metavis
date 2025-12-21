@@ -5,6 +5,7 @@ import CoreVideo
 import CoreMedia
 import CoreImage
 import MetaVisCore
+import MetaVisIngest
 
 /// Minimal, caching video frame reader that produces Metal textures.
 ///
@@ -29,6 +30,7 @@ actor ClipReader {
         case noSampleAvailable
         case noImageBuffer
         case cannotCreateMetalTexture
+        case cannotDecodeStill(String)
 
         var errorDescription: String? {
             switch self {
@@ -38,6 +40,7 @@ actor ClipReader {
             case .noSampleAvailable: return "No video samples available at requested time"
             case .noImageBuffer: return "SampleBuffer had no image buffer"
             case .cannotCreateMetalTexture: return "Failed to create Metal texture from CVPixelBuffer"
+            case .cannotDecodeStill(let reason): return "Failed to decode still: \(reason)"
             }
         }
     }
@@ -190,6 +193,9 @@ actor ClipReader {
 
     private var decoders: [DecoderKey: DecoderState] = [:]
 
+    private var timingDecisions: [String: VideoTimingNormalization.Decision] = [:]
+    private var timingDecisionFailures: Set<String> = []
+
     private var stillPixelBuffers: [DecoderKey: CVPixelBuffer] = [:]
 
     private var cache: [Key: CachedFrame] = [:]
@@ -223,20 +229,45 @@ actor ClipReader {
         assetURL: URL,
         timeSeconds: Double,
         width: Int,
-        height: Int
+        height: Int,
+        fallbackFPS: Double = 24.0
     ) async throws -> MTLTexture {
-        try await textureInternal(assetURL: assetURL, timeSeconds: timeSeconds, width: width, height: height)
+        try await textureInternal(assetURL: assetURL, timeSeconds: timeSeconds, width: width, height: height, fallbackFPS: fallbackFPS)
     }
 
     nonisolated func prefetch(
         assetURL: URL,
         timeSeconds: Double,
         width: Int,
-        height: Int
+        height: Int,
+        fallbackFPS: Double = 24.0
     ) {
         Task {
-            _ = try? await self.texture(assetURL: assetURL, timeSeconds: timeSeconds, width: width, height: height)
+            _ = try? await self.texture(assetURL: assetURL, timeSeconds: timeSeconds, width: width, height: height, fallbackFPS: fallbackFPS)
         }
+    }
+
+    func pixelBuffer(
+        assetURL: URL,
+        timeSeconds: Double,
+        width: Int,
+        height: Int,
+        fallbackFPS: Double = 24.0
+    ) async throws -> CVPixelBuffer {
+        let normalizedTimeSeconds = await normalizeTimeSecondsIfNeeded(assetURL: assetURL, timeSeconds: timeSeconds, fallbackFPS: fallbackFPS)
+        let quantized = Int64((normalizedTimeSeconds * 60_000.0).rounded())
+        let key = Key(assetURL: assetURL.absoluteString, timeQuantized: quantized, width: width, height: height)
+
+        if let hit = cache[key], let pb = hit.pixelBuffer {
+            return pb
+        }
+
+        _ = try await textureInternal(assetURL: assetURL, timeSeconds: timeSeconds, width: width, height: height, fallbackFPS: fallbackFPS)
+
+        if let hit = cache[key], let pb = hit.pixelBuffer {
+            return pb
+        }
+        throw ClipReaderError.noImageBuffer
     }
 
     // MARK: - Internals
@@ -245,9 +276,11 @@ actor ClipReader {
         assetURL: URL,
         timeSeconds: Double,
         width: Int,
-        height: Int
+        height: Int,
+        fallbackFPS: Double
     ) async throws -> MTLTexture {
-        let quantized = Int64((timeSeconds * 60_000.0).rounded())
+        let normalizedTimeSeconds = await normalizeTimeSecondsIfNeeded(assetURL: assetURL, timeSeconds: timeSeconds, fallbackFPS: fallbackFPS)
+        let quantized = Int64((normalizedTimeSeconds * 60_000.0).rounded())
         let key = Key(assetURL: assetURL.absoluteString, timeQuantized: quantized, width: width, height: height)
 
         if let hit = cache[key] {
@@ -258,15 +291,22 @@ actor ClipReader {
             throw ClipReaderError.cannotCreateMetalTexture
         }
 
-        let isEXR = assetURL.pathExtension.lowercased() == "exr"
+        let ext = assetURL.pathExtension.lowercased()
+        let isEXR = ext == "exr"
+        let isFITS = ext == "fits" || ext == "fit"
 
         let decodedPixelBuffer: CVPixelBuffer
-        if isEXR {
+        if isEXR || isFITS {
             let stillKey = DecoderKey(assetURL: assetURL.absoluteString, width: width, height: height)
             if let cached = stillPixelBuffers[stillKey] {
                 decodedPixelBuffer = cached
             } else {
-                let pb = try FFmpegEXRDecoder.decodeFirstFrameRGBAHalf(exrURL: assetURL, width: width, height: height)
+                let pb: CVPixelBuffer
+                if isEXR {
+                    pb = try FFmpegEXRDecoder.decodeFirstFrameRGBAHalf(exrURL: assetURL, width: width, height: height)
+                } else {
+                    pb = try FITSStillDecoder.decodeRGBAHalf(fitsURL: assetURL, width: width, height: height)
+                }
                 stillPixelBuffers[stillKey] = pb
                 decodedPixelBuffer = pb
             }
@@ -280,7 +320,7 @@ actor ClipReader {
                 decoders[decoderKey] = decoder
             }
 
-            let requestTime = CMTime(seconds: timeSeconds, preferredTimescale: 600)
+            let requestTime = CMTime(seconds: normalizedTimeSeconds, preferredTimescale: 600)
             let sample = try decoder.readSample(closestTo: requestTime)
             guard let imageBuffer = CMSampleBufferGetImageBuffer(sample) else {
                 throw ClipReaderError.noImageBuffer
@@ -308,7 +348,7 @@ actor ClipReader {
         let mtlTex: MTLTexture
         var cvTex: CVMetalTexture?
 
-        if isEXR {
+        if isEXR || isFITS {
             var cvMetalTex: CVMetalTexture?
             let createResult = CVMetalTextureCacheCreateTextureFromImage(
                 kCFAllocatorDefault,
@@ -357,6 +397,90 @@ actor ClipReader {
         let frame = CachedFrame(pixelBuffer: pixelBuffer, cvMetalTexture: cvTex, texture: mtlTex)
         insert(frame, for: key)
         return mtlTex
+    }
+
+    private func normalizeTimeSecondsIfNeeded(assetURL: URL, timeSeconds: Double, fallbackFPS: Double) async -> Double {
+        // Only apply to local video files where VFR is plausible.
+        let ext = assetURL.pathExtension.lowercased()
+        let isLikelyVideo = ["mov", "mp4", "m4v"].contains(ext)
+        guard isLikelyVideo else { return timeSeconds }
+
+        let key = assetURL.standardizedFileURL.absoluteString
+        if let decision = timingDecisions[key], decision.mode == .normalizeToCFR {
+            return ClipReader.quantize(timeSeconds: timeSeconds, toTargetFPS: decision.targetFPS)
+        }
+        if timingDecisionFailures.contains(key) {
+            return timeSeconds
+        }
+
+        do {
+            // Keep it lightweight: ClipReader is already doing decode work; avoid long probes.
+            let profile = try await VideoTimingProbe.probe(
+                url: assetURL,
+                config: .init(sampleLimit: 240, minSamplesForDecision: 30)
+            )
+            let decision = VideoTimingNormalization.decide(profile: profile, fallbackFPS: fallbackFPS)
+            if decision.mode == .normalizeToCFR {
+                timingDecisions[key] = decision
+                return ClipReader.quantize(timeSeconds: timeSeconds, toTargetFPS: decision.targetFPS)
+            }
+            // Cache the decision even if passthrough so we don't probe again.
+            timingDecisions[key] = decision
+            return timeSeconds
+        } catch {
+            timingDecisionFailures.insert(key)
+            return timeSeconds
+        }
+    }
+
+    nonisolated static func quantize(timeSeconds: Double, toTargetFPS fps: Double) -> Double {
+        guard timeSeconds.isFinite else { return timeSeconds }
+        guard fps.isFinite, fps > 0 else { return timeSeconds }
+
+        // Prefer exact frame durations for common rates.
+        if let fd = commonFrameDuration(forFPS: fps) {
+            return quantize(timeSeconds: timeSeconds, frameDuration: fd)
+        }
+
+        // Fallback: quantize using floating seconds.
+        let step = 1.0 / fps
+        if !step.isFinite || step <= 0 { return timeSeconds }
+        let idx = (timeSeconds / step).rounded()
+        return idx * step
+    }
+
+    private nonisolated static func commonFrameDuration(forFPS fps: Double) -> CMTime? {
+        func close(_ a: Double, _ b: Double, tol: Double = 0.001) -> Bool { abs(a - b) <= tol }
+
+        // Drop-frame style common rates.
+        if close(fps, 23.976) { return CMTime(value: 1001, timescale: 24000) }
+        if close(fps, 29.97) { return CMTime(value: 1001, timescale: 30000) }
+        if close(fps, 59.94) { return CMTime(value: 1001, timescale: 60000) }
+
+        // Integer rates.
+        if close(fps, 24.0) { return CMTime(value: 1, timescale: 24) }
+        if close(fps, 25.0) { return CMTime(value: 1, timescale: 25) }
+        if close(fps, 30.0) { return CMTime(value: 1, timescale: 30) }
+        if close(fps, 50.0) { return CMTime(value: 1, timescale: 50) }
+        if close(fps, 60.0) { return CMTime(value: 1, timescale: 60) }
+        return nil
+    }
+
+    private nonisolated static func quantize(timeSeconds: Double, frameDuration: CMTime) -> Double {
+        let t = CMTime(seconds: timeSeconds, preferredTimescale: 60000)
+        if !t.isValid || t.timescale == 0 || frameDuration.timescale == 0 || frameDuration.value == 0 {
+            return timeSeconds
+        }
+
+        // idx ~= t / frameDuration using integer math with rounding.
+        let num = Int64(t.value) * Int64(frameDuration.timescale)
+        let den = Int64(t.timescale) * Int64(frameDuration.value)
+        if den == 0 { return timeSeconds }
+        let idx = (num >= 0) ? ((num + den / 2) / den) : ((num - den / 2) / den)
+
+        let qValue = CMTimeValue(idx) * frameDuration.value
+        let q = CMTime(value: qValue, timescale: frameDuration.timescale)
+        return q.seconds
     }
 
     private func scale(pixelBuffer: CVPixelBuffer, toWidth width: Int, height: Int) throws -> CVPixelBuffer {
@@ -560,5 +684,94 @@ private enum FFmpegEXRDecoder {
         }
         let outURL = URL(fileURLWithPath: outPath)
         return try Data(contentsOf: outURL)
+    }
+}
+
+// MARK: - FITS decoding (pure Swift)
+
+private enum FITSStillDecoder {
+    static func decodeRGBAHalf(fitsURL: URL, width dstW: Int, height dstH: Int) throws -> CVPixelBuffer {
+        guard dstW > 0, dstH > 0 else {
+            throw ClipReader.ClipReaderError.cannotDecodeStill("invalid destination dimensions")
+        }
+
+        let asset = try FITSReader().read(url: fitsURL)
+        guard asset.bitpix == -32 else {
+            throw ClipReader.ClipReaderError.cannotDecodeStill("unsupported BITPIX=\(asset.bitpix)")
+        }
+
+        let srcW = asset.width
+        let srcH = asset.height
+        guard srcW > 0, srcH > 0 else {
+            throw ClipReader.ClipReaderError.cannotDecodeStill("invalid source dimensions")
+        }
+
+        // Use percentiles if available to reduce outlier impact.
+        let black = asset.statistics.min
+        let white = asset.statistics.percentiles[99] ?? asset.statistics.max
+        let denom = max(1e-20 as Float, (white - black))
+
+        var pb: CVPixelBuffer?
+        let attrs: [CFString: Any] = [
+            kCVPixelBufferCGImageCompatibilityKey: true,
+            kCVPixelBufferCGBitmapContextCompatibilityKey: true,
+            kCVPixelBufferMetalCompatibilityKey: true,
+            kCVPixelBufferIOSurfacePropertiesKey: [:]
+        ]
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            dstW,
+            dstH,
+            kCVPixelFormatType_64RGBAHalf,
+            attrs as CFDictionary,
+            &pb
+        )
+        guard status == kCVReturnSuccess, let pb else {
+            throw ClipReader.ClipReaderError.cannotDecodeStill("CVPixelBufferCreate failed (\(status))")
+        }
+
+        CVPixelBufferLockBaseAddress(pb, [])
+        defer { CVPixelBufferUnlockBaseAddress(pb, []) }
+
+        guard let base = CVPixelBufferGetBaseAddress(pb) else {
+            throw ClipReader.ClipReaderError.cannotDecodeStill("pixel buffer had no base address")
+        }
+
+        let dstBytesPerRow = CVPixelBufferGetBytesPerRow(pb)
+        let dstHalfBytesPerRow = dstW * 8 // 4 * Float16
+        guard dstBytesPerRow >= dstHalfBytesPerRow else {
+            throw ClipReader.ClipReaderError.cannotDecodeStill("unexpected pixel buffer stride")
+        }
+
+        asset.rawData.withUnsafeBytes { raw in
+            let floats = raw.bindMemory(to: Float.self)
+            let expected = srcW * srcH
+            guard floats.count >= expected else {
+                return
+            }
+
+            for y in 0..<dstH {
+                let dstRow = base.advanced(by: y * dstBytesPerRow)
+                let dst = dstRow.bindMemory(to: UInt16.self, capacity: dstW * 4)
+
+                let srcY = min(srcH - 1, Int((Double(y) * Double(srcH)) / Double(dstH)))
+                for x in 0..<dstW {
+                    let srcX = min(srcW - 1, Int((Double(x) * Double(srcW)) / Double(dstW)))
+                    let srcIdx = srcY * srcW + srcX
+
+                    let v = ColorScienceReference.sanitizeFinite(floats[srcIdx])
+                    let n = max(0, min(1, (v - black) / denom))
+                    let h = Float16(n).bitPattern
+                    let a = Float16(1.0).bitPattern
+
+                    dst[(x * 4) + 0] = h
+                    dst[(x * 4) + 1] = h
+                    dst[(x * 4) + 2] = h
+                    dst[(x * 4) + 3] = a
+                }
+            }
+        }
+
+        return pb
     }
 }

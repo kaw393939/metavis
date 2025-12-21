@@ -210,4 +210,123 @@ final class DeliverableE2ETests: XCTestCase {
 
         XCTAssertEqual(MetalSimulationDiagnostics.cpuReadbackCount, 0, "Expected no CPU texture readback (texture.getBytes) during export")
     }
+
+    func test_export_batch_creates_sub_bundles_with_manifests() async throws {
+        DotEnvLoader.loadIfPresent()
+
+        let recipe = StandardRecipes.SmokeTest2s()
+        let session = ProjectSession(recipe: recipe, entitlements: EntitlementManager(initialPlan: .pro))
+
+        let engine = try MetalSimulationEngine()
+        try await engine.configure()
+        let exporter = VideoExporter(engine: engine)
+
+        let baseURL = TestOutputs.baseDirectory.appendingPathComponent("deliverable_batch", isDirectory: true)
+        try? FileManager.default.removeItem(at: baseURL)
+
+        let quality = QualityProfile(
+            name: "Review 720p",
+            fidelity: .high,
+            resolutionHeight: 720,
+            colorDepth: 8
+        )
+
+        let deliverables: [ExportDeliverable] = [.youtubeMaster, .reviewProxy]
+        let manifests = try await session.exportBatch(
+            using: exporter,
+            to: baseURL,
+            deliverables: deliverables,
+            quality: quality,
+            frameRate: 24,
+            codec: .hevc,
+            audioPolicy: .required
+        )
+
+        XCTAssertEqual(Set(manifests.map { $0.deliverable.id }), Set(deliverables.map { $0.id }))
+
+        for deliverable in deliverables {
+            let bundleURL = baseURL.appendingPathComponent(deliverable.id, isDirectory: true)
+            let movURL = bundleURL.appendingPathComponent("video.mov")
+            let manifestURL = bundleURL.appendingPathComponent("deliverable.json")
+
+            XCTAssertTrue(FileManager.default.fileExists(atPath: movURL.path), "Missing video.mov for \(deliverable.id)")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: manifestURL.path), "Missing deliverable.json for \(deliverable.id)")
+
+            let data = try Data(contentsOf: manifestURL)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let manifest = try decoder.decode(DeliverableManifest.self, from: data)
+
+            XCTAssertEqual(manifest.deliverable, deliverable)
+            XCTAssertEqual(manifest.quality, quality)
+        }
+    }
+
+    func test_export_deliverable_fails_when_color_stats_policy_enforced_and_violated() async throws {
+        DotEnvLoader.loadIfPresent()
+
+        let recipe = StandardRecipes.SmokeTest2s()
+        let session = ProjectSession(recipe: recipe, entitlements: EntitlementManager(initialPlan: .pro))
+
+        let engine = try MetalSimulationEngine()
+        try await engine.configure()
+        let exporter = VideoExporter(engine: engine)
+
+        let bundleURL = TestOutputs.baseDirectory.appendingPathComponent("deliverable_qc_enforced_should_fail", isDirectory: true)
+        try? FileManager.default.removeItem(at: bundleURL)
+
+        let quality = QualityProfile(
+            name: "Master 4K",
+            fidelity: .master,
+            resolutionHeight: 2160,
+            colorDepth: 10
+        )
+
+        let durationSeconds = 2.0
+        let fps = 24.0
+        let expectedFrames = Int((durationSeconds * fps).rounded())
+        let minSamples = max(1, Int(Double(expectedFrames) * 0.85))
+        let video = VideoContainerPolicy(
+            minDurationSeconds: durationSeconds - 1.0,
+            maxDurationSeconds: durationSeconds + 1.0,
+            expectedWidth: quality.resolutionHeight * 16 / 9,
+            expectedHeight: quality.resolutionHeight,
+            expectedNominalFrameRate: fps,
+            minVideoSampleCount: minSamples
+        )
+
+        let impossibleColorPolicy = VideoContentPolicy.ColorStatsPolicy(
+            enforce: true,
+            minMeanLuma: 2.0,
+            maxMeanLuma: 3.0,
+            maxChannelDelta: 0.0,
+            minLowLumaFraction: 0.0,
+            minHighLumaFraction: 0.0,
+            maxDimension: 64
+        )
+
+        let qcOverride = DeterministicQCPolicy(
+            video: video,
+            content: VideoContentPolicy(minAdjacentDistance: 0.0, enforceTemporalVarietyIfMultipleClips: false, colorStats: impossibleColorPolicy),
+            requireAudioTrack: true,
+            requireAudioNotSilent: true
+        )
+
+        do {
+            _ = try await session.exportDeliverable(
+                using: exporter,
+                to: bundleURL,
+                deliverable: .youtubeMaster,
+                quality: quality,
+                frameRate: 24,
+                codec: .hevc,
+                audioPolicy: .required,
+                qcPolicyOverrides: qcOverride
+            )
+            XCTFail("Expected exportDeliverable to throw when enforced color stats policy is violated")
+        } catch {
+            // Expected. (The bundle should not exist because DeliverableWriter is atomic.)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: bundleURL.path))
+        }
+    }
 }

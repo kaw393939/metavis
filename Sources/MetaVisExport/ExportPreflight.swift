@@ -33,7 +33,11 @@ public enum ExportPreflight {
                                 fields: ["id": manifest.id, "domain": manifest.domain.rawValue]
                             )
                         } else {
-                            for port in manifest.inputs where port.name != "source" {
+                            // Allow known multi-input video effects.
+                            // TimelineCompiler/MetalSimulationEngine support a small set of secondary inputs
+                            // (e.g. `faceMask` for face enhance).
+                            let allowedPorts: Set<String> = ["source", "input", "faceMask", "mask"]
+                            for port in manifest.inputs where !allowedPorts.contains(port.name) {
                                 await trace.record(
                                     "export.preflight.unsupported_effect_input_port",
                                     fields: ["id": manifest.id, "port": port.name]

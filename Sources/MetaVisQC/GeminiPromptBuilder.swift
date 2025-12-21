@@ -102,6 +102,9 @@ public enum GeminiPromptBuilder {
 
         let frames = context.keyFrameLabels.isEmpty ? "(none)" : context.keyFrameLabels.joined(separator: ", ")
 
+        let redactedNarrative = redactedText(context.expectedNarrative, policy: context.policy)
+        let redactedNotes = notes.map { redactedText($0, policy: context.policy) }
+
         var lines: [String] = []
         lines.append("You are a strict QA system for a video export pipeline.")
         lines.append(modelLine)
@@ -111,15 +114,15 @@ public enum GeminiPromptBuilder {
         lines.append(metricsLine)
         lines.append("")
         lines.append("EXPECTED NARRATIVE:")
-        lines.append(context.expectedNarrative)
+        lines.append(redactedNarrative)
         lines.append("")
         lines.append("KEYFRAMES PROVIDED (labels):")
         lines.append(frames)
 
-        if !notes.isEmpty {
+        if !redactedNotes.isEmpty {
             lines.append("")
             lines.append("NOTES:")
-            for n in notes { lines.append("- \(n)") }
+            for n in redactedNotes { lines.append("- \(n)") }
         }
 
         lines.append("")
@@ -160,5 +163,45 @@ public enum GeminiPromptBuilder {
             return url.lastPathComponent
         }
         return url.path
+    }
+
+    public static func redactedText(_ text: String, policy: AIUsagePolicy) -> String {
+        var out = text
+
+        if policy.redaction.redactIdentifiers {
+            // UUIDs
+            out = out.replacingOccurrences(
+                of: "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+                with: "<UUID>",
+                options: .regularExpression
+            )
+
+            // Emails
+            out = out.replacingOccurrences(
+                of: "[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}",
+                with: "<EMAIL>",
+                options: [.regularExpression, .caseInsensitive]
+            )
+        }
+
+        if policy.redaction.redactFilePaths {
+            // Absolute paths (conservative: only common macOS roots).
+            // Replace with just the lastPathComponent to preserve some useful context.
+            let pattern = "(?:(?:/Users|/Volumes|/private|/var|/tmp)/[^\\s\"']+)"
+            if let re = try? NSRegularExpression(pattern: pattern) {
+                let fullRange = NSRange(out.startIndex..<out.endIndex, in: out)
+                let matches = re.matches(in: out, range: fullRange)
+                if !matches.isEmpty {
+                    for m in matches.reversed() {
+                        guard let r = Range(m.range, in: out) else { continue }
+                        let path = String(out[r])
+                        let replacement = URL(fileURLWithPath: path).lastPathComponent
+                        out.replaceSubrange(r, with: replacement.isEmpty ? "<PATH>" : replacement)
+                    }
+                }
+            }
+        }
+
+        return out
     }
 }

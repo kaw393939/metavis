@@ -183,7 +183,8 @@ public enum StandardFeatures {
              .vector3(name: "emissionColorWarm", default: SIMD3<Float>(1.0, 0.4, 0.1)),
              .vector3(name: "emissionColorCool", default: SIMD3<Float>(0.1, 0.2, 0.8)),
              .float(name: "emissionIntensity", min: 0, max: 10, default: 1.0),
-             .float(name: "hdrScale", min: 0, max: 10, default: 1.0)
+             .float(name: "hdrScale", min: 0, max: 10, default: 1.0),
+             .float(name: "debugMode", min: 0, max: 3, default: 0.0)
         ],
         kernelName: "fx_volumetric_nebula"
     )
@@ -235,6 +236,19 @@ public enum StandardFeatures {
             .float(name: "tint", min: -1.0, max: 1.0, default: 0.0)
         ],
         kernelName: "fx_color_grade_simple"
+    )
+
+    public static let falseColorTurbo = FeatureManifest(
+        id: "com.metavis.fx.false_color.turbo",
+        version: "1.0.0",
+        name: "False Color (Turbo)",
+        category: .color,
+        inputs: [PortDefinition(name: "source", type: .image)],
+        parameters: [
+            .float(name: "exposure", min: -10.0, max: 10.0, default: 0.0),
+            .float(name: "gamma", min: 0.1, max: 4.0, default: 1.0)
+        ],
+        kernelName: "fx_false_color_turbo"
     )
 
     public static let blurGaussian = FeatureManifest(
@@ -325,6 +339,21 @@ public enum StandardFeatures {
             .float(name: "intensity", min: 0.0, max: 1.0, default: 1.0)
         ],
         kernelName: "fx_face_enhance"
+    )
+
+    public static let beautyEnhance = FeatureManifest(
+        id: "com.metavis.fx.beauty.enhance",
+        version: "1.0.0",
+        name: "Beauty Enhance",
+        category: .specialty,
+        inputs: [
+            PortDefinition(name: "source", type: .image)
+        ],
+        parameters: [
+            .float(name: "skinSmoothing", min: 0.0, max: 1.0, default: 0.35),
+            .float(name: "intensity", min: 0.0, max: 1.0, default: 0.8)
+        ],
+        kernelName: "fx_beauty_enhance"
     )
     
     public static let lightLeak = FeatureManifest(
@@ -433,6 +462,7 @@ public enum StandardFeatures {
         await FeatureRegistry.shared.register(tonemapPQ)
         await FeatureRegistry.shared.register(applyLUT)
         await FeatureRegistry.shared.register(colorGradeSimple)
+        await FeatureRegistry.shared.register(falseColorTurbo)
         await FeatureRegistry.shared.register(blurGaussian)
         await FeatureRegistry.shared.register(blurGaussianH)
         await FeatureRegistry.shared.register(blurGaussianV)
@@ -440,6 +470,7 @@ public enum StandardFeatures {
         await FeatureRegistry.shared.register(blurredMask)
         await FeatureRegistry.shared.register(temporalAccumulate)
         await FeatureRegistry.shared.register(faceEnhance)
+        await FeatureRegistry.shared.register(beautyEnhance)
         await FeatureRegistry.shared.register(lightLeak)
         await FeatureRegistry.shared.register(spectralDispersion)
         await FeatureRegistry.shared.register(faceMaskGenerator)

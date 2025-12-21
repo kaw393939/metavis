@@ -23,7 +23,8 @@ public struct TimelineCompiler {
     public func compile(
         timeline: Timeline,
         at time: Time,
-        quality: QualityProfile
+        quality: QualityProfile,
+        frameContext: RenderFrameContext? = nil
     ) async throws -> RenderRequest {
 
         // Ensure built-in features are available for timeline effects.
@@ -57,7 +58,7 @@ public struct TimelineCompiler {
         }
         
         // 2. Create source nodes for each active clip
-        var clipNodes: [(node: RenderNode, alpha: Float)] = []
+        var clipNodes: [(clip: Clip, node: RenderNode, alpha: Float)] = []
         
         for (clip, alpha) in activeClips {
             let sourceNode = try createSourceNode(for: clip, at: time)
@@ -78,17 +79,17 @@ public struct TimelineCompiler {
             nodes.append(idtNode)
 
             // Apply clip effects in working space (ACEScg) before compositing.
-            let (fxNodes, fxOutputID) = try await compileEffects(for: clip, inputNodeID: idtNode.id)
+            let (fxNodes, fxOutputID) = try await compileEffects(for: clip, at: time, inputNodeID: idtNode.id, frameContext: frameContext)
             nodes.append(contentsOf: fxNodes)
 
             // Use the last real compiled node as the clip's output.
             if fxOutputID == idtNode.id {
-                clipNodes.append((idtNode, alpha))
+                clipNodes.append((clip, idtNode, alpha))
             } else if let real = (fxNodes.last { $0.id == fxOutputID } ?? fxNodes.last) {
-                clipNodes.append((real, alpha))
+                clipNodes.append((clip, real, alpha))
             } else {
                 // Defensive: if compiler returned an output ID but no nodes, fall back.
-                clipNodes.append((idtNode, alpha))
+                clipNodes.append((clip, idtNode, alpha))
             }
         }
         
@@ -99,30 +100,58 @@ public struct TimelineCompiler {
             // Single clip - no compositing needed
             compositeRoot = clipNodes[0].node
         } else if clipNodes.count == 2 {
-            // Two clips - use optimized crossfade
-            let (clip1, alpha1) = clipNodes[0]
-            let (clip2, alpha2) = clipNodes[1]
-            
-            // Calculate crossfade mix based on alphas
-            let totalAlpha = alpha1 + alpha2
-            let mix = totalAlpha > 0 ? alpha2 / totalAlpha : 0.5
-            
-            let crossfadeNode = RenderNode(
-                name: "Crossfade",
-                shader: "compositor_crossfade",
-                inputs: ["clipA": clip1.id, "clipB": clip2.id],
-                parameters: ["mix": .float(Double(mix))]
+            // Two clips - use a transition-aware compositor.
+            // Sort by startTime so clipA is the earlier clip and clipB is the later (incoming) clip.
+            let sorted = clipNodes.sorted {
+                if $0.clip.startTime == $1.clip.startTime { return $0.clip.id.uuidString < $1.clip.id.uuidString }
+                return $0.clip.startTime < $1.clip.startTime
+            }
+            let a = sorted[0]
+            let b = sorted[1]
+
+            let progress: Float = transitionProgress(outgoing: a.clip, incoming: b.clip, at: time) ?? {
+                // Fallback: infer mix from the alpha overlap.
+                let totalAlpha = a.alpha + b.alpha
+                return totalAlpha > 0 ? (b.alpha / totalAlpha) : 0.5
+            }()
+
+            let shader: String
+            var params: [String: NodeValue] = ["progress": .float(Double(progress))]
+
+            if let tIn = b.clip.transitionIn {
+                switch tIn.type {
+                case .wipe(let dir):
+                    shader = "compositor_wipe"
+                    params["direction"] = .float(Double(wipeDirectionIndex(dir)))
+                case .dip(let color):
+                    shader = "compositor_dip"
+                    params["dipColor"] = .vector3(SIMD3<Double>(Double(color.x), Double(color.y), Double(color.z)))
+                case .crossfade, .cut:
+                    shader = "compositor_crossfade"
+                    params = ["mix": .float(Double(progress))]
+                }
+            } else {
+                // Default to crossfade when no transition type is present.
+                shader = "compositor_crossfade"
+                params = ["mix": .float(Double(progress))]
+            }
+
+            let node = RenderNode(
+                name: "Transition",
+                shader: shader,
+                inputs: ["clipA": a.node.id, "clipB": b.node.id],
+                parameters: params
             )
-            nodes.append(crossfadeNode)
-            compositeRoot = crossfadeNode
+            nodes.append(node)
+            compositeRoot = node
         } else {
             // 3+ clips - use general compositor (bottom to top)
             // For now, simplified: composite pairs sequentially
             var currentRoot = clipNodes[0].node
             
             for i in 1..<clipNodes.count {
-                let (nextNode, nextAlpha) = clipNodes[i]
-                let (_, currentAlpha) = clipNodes[i-1]
+                let (_, nextNode, nextAlpha) = clipNodes[i]
+                let (_, _, currentAlpha) = clipNodes[i-1]
                 
                 let compNode = RenderNode(
                     name: "Composite_\(i)",
@@ -159,7 +188,7 @@ public struct TimelineCompiler {
     
     // MARK: - Helper Methods
 
-    private func compileEffects(for clip: Clip, inputNodeID: UUID) async throws -> (nodes: [RenderNode], outputNodeID: UUID) {
+    private func compileEffects(for clip: Clip, at time: Time, inputNodeID: UUID, frameContext: RenderFrameContext?) async throws -> (nodes: [RenderNode], outputNodeID: UUID) {
         guard !clip.effects.isEmpty else {
             return ([], inputNodeID)
         }
@@ -178,13 +207,38 @@ public struct TimelineCompiler {
                 continue
             }
 
-            // For clip-level effects we currently only support single-image input features.
-            // The common convention is a `source` port.
+            // Clip-level effects can have multiple inputs (e.g. face enhance needs a face mask).
+            // We supply conventional bindings here and create minimal generator nodes when required.
             var externalInputs: [String: UUID] = [:]
+
+            // Primary input naming: support either `source` or `input`.
             for port in manifest.inputs {
-                if port.name == "source" {
+                switch port.name {
+                case "source", "input":
+                    // Prefer `source` when requested; otherwise `input`.
                     externalInputs[port.name] = currentOutput
-                } else {
+
+                case "faceMask":
+                    let rects = frameContext?.faceRectsByClipID[clip.id] ?? []
+                    // Pack as [Float] for NodeValue.floatArray.
+                    var rectFloats: [Float] = []
+                    rectFloats.reserveCapacity(rects.count * 4)
+                    for r in rects {
+                        rectFloats.append(r.x)
+                        rectFloats.append(r.y)
+                        rectFloats.append(r.z)
+                        rectFloats.append(r.w)
+                    }
+
+                    let maskNode = RenderNode(
+                        name: "FaceMask",
+                        shader: "fx_generate_face_mask",
+                        parameters: ["faceRects": .floatArray(rectFloats)]
+                    )
+                    compiledNodes.append(maskNode)
+                    externalInputs[port.name] = maskNode.id
+
+                default:
                     throw Error.unsupportedEffectInputPort(featureID: manifest.id, port: port.name)
                 }
             }
@@ -204,6 +258,16 @@ public struct TimelineCompiler {
     /// Creates a source render node for a clip
     private func createSourceNode(for clip: Clip, at time: Time) throws -> RenderNode {
         let sourceNode: RenderNode
+
+        // Clip-local time is required for correct editing semantics (move/trim/slip/retime).
+        // Even procedural generators should use the clip-local time so that they can be edited.
+        let baseLocalTime = (time - clip.startTime) + clip.offset
+        let localTime: Time = {
+            guard let factor = retimeFactor(for: clip) else { return baseLocalTime }
+            // Retime semantics: map timeline-local time to source-local time.
+            // factor > 1.0 => faster playback (source time advances more per timeline second).
+            return Time(seconds: baseLocalTime.seconds * factor)
+        }()
         
         if clip.asset.sourceFn.hasPrefix("ligm://") {
             // Procedural generation
@@ -235,7 +299,7 @@ public struct TimelineCompiler {
                 sourceNode = RenderNode(
                     name: "ZonePlate_\(clip.id.uuidString)",
                     shader: "fx_zone_plate",
-                    parameters: ["time": .float(time.seconds)]
+                    parameters: ["time": .float(localTime.seconds)]
                 )
             } else if id.contains("smpte") {
                 sourceNode = RenderNode(
@@ -253,7 +317,6 @@ public struct TimelineCompiler {
             }
         } else {
             // Video file - would need IDT in full implementation
-            let localTime = (time - clip.startTime) + clip.offset
             sourceNode = RenderNode(
                 name: "Clip_\(clip.id.uuidString)",
                 shader: "source_texture",
@@ -266,4 +329,55 @@ public struct TimelineCompiler {
         
         return sourceNode
     }
+
+    private func retimeFactor(for clip: Clip) -> Double? {
+        guard let app = clip.effects.first(where: { $0.id == "mv.retime" }) else { return nil }
+        guard let raw = app.parameters["factor"] else { return nil }
+        let factor: Double?
+        switch raw {
+        case .float(let v):
+            factor = v
+        case .string(let s):
+            factor = Double(s)
+        default:
+            factor = nil
+        }
+        guard let f = factor, f.isFinite, f > 0 else { return nil }
+        return f
+    }
+
+    private func transitionProgress(outgoing: Clip, incoming: Clip, at time: Time) -> Float? {
+        // Prefer incoming transition (progress is naturally 0->1).
+        if let tIn = incoming.transitionIn, tIn.duration.seconds > 0 {
+            let start = incoming.startTime
+            let end = incoming.startTime + tIn.duration
+            if time >= start && time <= end {
+                let raw = Float((time - start).seconds / tIn.duration.seconds)
+                return clamp01(tIn.easing.apply(raw))
+            }
+        }
+
+        // Fall back to outgoing transition, derived from alpha.
+        if let tOut = outgoing.transitionOut, tOut.duration.seconds > 0 {
+            let start = outgoing.endTime - tOut.duration
+            let end = outgoing.endTime
+            if time >= start && time <= end {
+                let raw = Float((outgoing.endTime - time).seconds / tOut.duration.seconds) // 1->0
+                let alpha = tOut.easing.apply(clamp01(raw))
+                return clamp01(1.0 - alpha)
+            }
+        }
+        return nil
+    }
+
+    private func wipeDirectionIndex(_ d: TransitionType.WipeDirection) -> Int {
+        switch d {
+        case .leftToRight: return 0
+        case .rightToLeft: return 1
+        case .topToBottom: return 2
+        case .bottomToTop: return 3
+        }
+    }
+
+    private func clamp01(_ v: Float) -> Float { min(1.0, max(0.0, v)) }
 }

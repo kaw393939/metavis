@@ -1,0 +1,131 @@
+# Concept: MetaVis Motion Graphics Engine
+**"Hollywood Intros for Everyone"**
+
+## The Problem
+Tools like After Effects are powerful but manual. Creating a "Marvel Style" intro requires keyframing hundreds of layers, masking, and managing 3D cameras. For a "Prosumer" or "AI Engineer," this is too low-level.
+
+## The Solution: "Procedural Recipes"
+Instead of a generic timeline of layers, we treat Motion Graphics as **Parametric Recipes**. The user (or AI) selects a "Look," and the engine procedurally generates the animation based on the input text/assets.
+
+---
+
+## 1. The Core Components
+
+To build famous intros (Star Wars, Marvel, HBO), the engine needs three specific capabilities currently missing or nascent in MetaVis:
+
+### A. The "2.5D" Compositor (The Stage)
+Most motion graphics aren't fully 3D (like Blender) nor fully 2D (like Paint). They are **2.5D Planes in 3D Space**.
+*   **Requirement:** We need a `Camera` object in `MetaVisTimeline`.
+*   **Feature:** "Multi-plane Layout". Text is layer 1 (Z=0), Particles are layer 2 (Z=-100), Background is layer 3 (Z=-500).
+*   **Parallax:** As the camera moves, layers shift naturally.
+
+### B. The Typography Engine (The Actor)
+Text is the main character.
+*   **SDF (Signed Distance Fields):** Infinite resolution text rendering (essential for the massive zooms in Marvel intros).
+*   **Text Animators:** Not keyframes, but behaviors.
+    *   `RangeSelector`: "Fade in characters 0 to 10 over 2 seconds."
+    *   `WigglySelector`: "Randomly offset position of each character."
+
+### C. The Emitter System (The Atmosphere)
+*   **Particles:** Dust, Stars (Star Wars), Sparks.
+*   **Cloners:** "Repeat this image 100 times" (Marvel flip-book effect).
+
+---
+
+## 2. Deconstructing Famous Intros
+
+Here is how we represent them as **MetaVis Recipes**:
+
+### The "Comic Flip" (Marvel Style)
+*   **Ingredients:**
+    *   `ImageSequence`: 50 images of "pages".
+    *   `MaskText`: The letters "METAVIS" masking the images.
+    *   `Camera`: Zooms out from Z=10 to Z=-50.
+*   **The Recipe (User Controls):**
+    *   Input: "Folder of Images"
+    *   Input: "Text String"
+    *   Knob: "Flip Speed"
+*   **AI Job:** "Analyze these images, pick the best 50 faces, crop them, sequence them."
+
+### The "Space Crawl" (Star Wars Style)
+*   **Ingredients:**
+    *   `Transform3D`: Rotation X = 70 degrees.
+    *   `ScrollModifier`: Translates Y from -1.0 to +10.0 over time.
+    *   `Background`: Starfield shader.
+*   **The Recipe:**
+    *   Input: "Body Text"
+    *   Knob: "Scroll Speed"
+    *   Knob: "Tilt Angle"
+
+### The "Glitch Title" (Cyberpunk/Matrix)
+*   **Ingredients:**
+    *   `DisplacementShader`: Offsets pixels horizontally based on noise.
+    *   `ChromaticAberration`: Splits RGB channels.
+    *   `TextAnimator`: Randomly swaps characters ("A" -> "X" -> "A").
+*   **The Recipe:**
+    *   Knob: "Glitch Intensity"
+    *   Knob: "Color Palette"
+
+---
+
+## 3. The "Smart Asset" Architecture
+
+We shouldn't just "hardcode" these. We should build a **Node Graph** that allows users to *compose* these, but package them as simple **effects**.
+
+```swift
+// Pseudo-code for a Motion Recipe
+struct MotionRecipe {
+    let inputs: [RecipeInput] // Text, Images, Colors
+    let buildGraph: (Inputs) -> RenderGraph
+}
+```
+
+### AI Integration
+The "AI Media Engineer" becomes the **Director**.
+1.  **User:** "Make a spooky intro for my horror short."
+2.  **AI:**
+    *   Selects `Recipe: Glitch_Title`.
+    *   Sets Font: "Chiller" or "Courier".
+    *   Sets Color: Dark Red & Black.
+    *   Sets Text: "THE BASEMENT".
+    *   Generates: A subtle "smoke" particle layer.
+
+## 4. Wishlist for `MetaVisGraphics`
+To make this real, we need:
+1.  **SDF Text Shader:** For crisp text at any scale.
+2.  **3D Transform Support:** Matrices for Perspective.
+3.  **Instancing:** Drawing 1000 "Stars" or "Pages" in one draw call.
+
+## 5. The AI Interaction Model (Natural Language to Metal)
+
+To achieve "Hollywood results w/ Local LLM," we need to abstract the **Technical Details** away from the user.
+
+### A. The "Director's Script" Interface
+Instead of a Timeline, the user interacts with a **Semantic Script**.
+
+**User Prompt:**
+> "Create a *Star Wars* style intro, but make it feel like a horror movie. Use the text: 'THE DEAD RETURN'. make it red and twitchy."
+
+**LLM Action (The Translation Layer):**
+The LLM acts as the **Technical Director**. It maps high-level adjectives to low-level shader uniforms.
+1.  **"Star Wars Style"** → Selects `Recipe: SpaceCrawl`.
+    *   *Sets* `Camera.RotationX = 75`
+    *   *Sets* `Text.ScrollSpeed = 2.0`
+2.  **"Horror Feel"** → Modifies the Environment.
+    *   *Sets* `Background.StarTexture = nil`
+    *   *Sets* `Background.FogDensity = 0.8` (Spooky atmosphere)
+3.  **"Red and Twitchy"** → Overrides Shaders.
+    *   *Injects* `PostProcess: Glitch`
+    *   *Sets* `Glitch.Intensity = random(0.1, 0.8)`
+    *   *Sets* `Font.Color = Color.Red`
+
+### B. Concept: "Semantic Uniforms"
+We expose parameters to the LLM not as floats, but as *concepts*.
+*   **Shader Uniform:** `float u_distortion` (0.0 - 1.0)
+*   **LLM Description:** "Controls how broken/glitchy the reality feels. Use 0.8+ for nightmares, 0.2 for subtle unease."
+
+### C. The Feedback Loop
+1.  **Generate:** LLM produces a `JSON` description of the Scene Graph.
+2.  **Render:** Engine renders a preview.
+3.  **Critique:** "Too dark."
+4.  **Refine:** LLM adjusts `Light.Intensity` from `2.0` to `5.0`.

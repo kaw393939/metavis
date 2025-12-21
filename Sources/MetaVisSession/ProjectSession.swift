@@ -7,6 +7,7 @@ import MetaVisTimeline
 import MetaVisPerception
 import MetaVisServices
 import MetaVisQC
+import MetaVisIngest
 
 /// Represents the global state of an open project.
 public struct ProjectState: Codable, Sendable, Equatable {
@@ -34,6 +35,12 @@ public struct ProjectConfig: Codable, Sendable, Equatable {
     }
 }
 
+internal struct UndoStep {
+    let label: String
+    let undo: (inout ProjectState) -> Void
+    let redo: (inout ProjectState) -> Void
+}
+
 /// A discrete mutation to the project state.
 public enum EditAction: Sendable {
     case addTrack(Track)
@@ -51,8 +58,8 @@ public actor ProjectSession: Identifiable {
     public private(set) var state: ProjectState
     
     /// History stack.
-    private var undoStack: [ProjectState] = []
-    private var redoStack: [ProjectState] = []
+    private var undoStack: [UndoStep] = []
+    private var redoStack: [UndoStep] = []
     
     /// The Perception Engine (Eyes).
     private let aggregator: VisualContextAggregator
@@ -98,19 +105,21 @@ public actor ProjectSession: Identifiable {
     /// Dispatch an action to mutate the state.
     public func dispatch(_ action: EditAction) async {
         await trace.record("session.dispatch.begin", fields: ["action": String(describing: action)])
-        // 1. Push current state to undo stack
-        undoStack.append(state)
-        redoStack.removeAll() // Clear redo on new action
+
+        let before = state
         
         // 2. Apply mutation
         var newState = state
         switch action {
         case .addTrack(let track):
             newState.timeline.tracks.append(track)
+            newState.timeline.recomputeDuration()
             
         case .addClip(let clip, let trackId):
             if let index = newState.timeline.tracks.firstIndex(where: { $0.id == trackId }) {
                 newState.timeline.tracks[index].clips.append(clip)
+                newState.timeline.tracks[index].clips.sort(by: { $0.startTime < $1.startTime })
+                newState.timeline.recomputeDuration()
             } else {
                 // If track doesn't exist, maybe create it? Or fail silently?
                 // For this MVP, let's auto-create if needed or just append logic
@@ -121,30 +130,109 @@ public actor ProjectSession: Identifiable {
         case .removeClip(let clipId, let trackId):
             if let index = newState.timeline.tracks.firstIndex(where: { $0.id == trackId }) {
                 newState.timeline.tracks[index].clips.removeAll(where: { $0.id == clipId })
+                newState.timeline.recomputeDuration()
             }
             
         case .setProjectName(let name):
             newState.config.name = name
         }
         
-        // 3. Update State
+        // 3. Record undo/redo if the action actually mutated state.
+        if newState != before {
+            let step: UndoStep
+            switch action {
+            case .addTrack(let track):
+                step = UndoStep(
+                    label: "addTrack",
+                    undo: { st in
+                        st.timeline.tracks.removeAll(where: { $0.id == track.id })
+                        st.timeline.recomputeDuration()
+                    },
+                    redo: { st in
+                        st.timeline.tracks.append(track)
+                        st.timeline.recomputeDuration()
+                    }
+                )
+
+            case .addClip(let clip, let trackId):
+                step = UndoStep(
+                    label: "addClip",
+                    undo: { st in
+                        if let index = st.timeline.tracks.firstIndex(where: { $0.id == trackId }) {
+                            st.timeline.tracks[index].clips.removeAll(where: { $0.id == clip.id })
+                            st.timeline.recomputeDuration()
+                        }
+                    },
+                    redo: { st in
+                        if let index = st.timeline.tracks.firstIndex(where: { $0.id == trackId }) {
+                            st.timeline.tracks[index].clips.append(clip)
+                            st.timeline.tracks[index].clips.sort(by: { $0.startTime < $1.startTime })
+                            st.timeline.recomputeDuration()
+                        }
+                    }
+                )
+
+            case .removeClip(let clipId, let trackId):
+                let removedClips: [Clip]
+                if let index = before.timeline.tracks.firstIndex(where: { $0.id == trackId }) {
+                    removedClips = before.timeline.tracks[index].clips.filter { $0.id == clipId }
+                } else {
+                    removedClips = []
+                }
+
+                step = UndoStep(
+                    label: "removeClip",
+                    undo: { st in
+                        guard !removedClips.isEmpty else { return }
+                        if let index = st.timeline.tracks.firstIndex(where: { $0.id == trackId }) {
+                            st.timeline.tracks[index].clips.append(contentsOf: removedClips)
+                            st.timeline.tracks[index].clips.sort(by: { $0.startTime < $1.startTime })
+                            st.timeline.recomputeDuration()
+                        }
+                    },
+                    redo: { st in
+                        if let index = st.timeline.tracks.firstIndex(where: { $0.id == trackId }) {
+                            st.timeline.tracks[index].clips.removeAll(where: { $0.id == clipId })
+                            st.timeline.recomputeDuration()
+                        }
+                    }
+                )
+
+            case .setProjectName(let name):
+                let oldName = before.config.name
+                step = UndoStep(
+                    label: "setProjectName",
+                    undo: { st in st.config.name = oldName },
+                    redo: { st in st.config.name = name }
+                )
+            }
+
+            undoStack.append(step)
+            redoStack.removeAll()
+        }
+
+        // 4. Update State
         state = newState
 
         await trace.record("session.dispatch.end", fields: ["action": String(describing: action)])
     }
     
     public func undo() async {
-        guard let previous = undoStack.popLast() else { return }
+        guard let step = undoStack.popLast() else { return }
         await trace.record("session.undo", fields: [:])
-        redoStack.append(state)
-        state = previous
+        var newState = state
+        step.undo(&newState)
+        redoStack.append(step)
+        state = newState
     }
     
     public func redo() async {
-        guard let next = redoStack.popLast() else { return }
+        guard let step = redoStack.popLast() else { return }
         await trace.record("session.redo", fields: [:])
-        undoStack.append(state)
-        state = next
+        var newState = state
+        step.redo(&newState)
+        undoStack.append(step)
+        state = newState
     }
     
     // MARK: - Perception
@@ -168,32 +256,28 @@ public actor ProjectSession: Identifiable {
     }
     
     // MARK: - Intelligence (Jarvis)
-    
+
     /// Processes a natural language command using the Local LLM.
     /// Returns the parsed intent for the UI to display or confirm.
     public func processCommand(_ text: String) async throws -> UserIntent? {
-
         await trace.record("intent.process.begin", fields: ["text": text])
-        
-        // 1. Build Context
-        // Convert SemanticFrame to JSON String
+
+        // 1. Build Context (timeline + clip IDs + optional visual context)
+        let editingContext = LLMEditingContext.fromTimeline(state.timeline, visualContext: state.visualContext)
         let contextString: String
-        if let frame = state.visualContext,
-           let data = try? JSONEncoder().encode(frame),
+        if let data = try? JSONEncoder().encode(editingContext),
            let json = String(data: data, encoding: .utf8) {
             contextString = json
         } else {
             contextString = "{}"
         }
-        
+
         // 2. Request LLM
         let request = LLMRequest(userQuery: text, context: contextString)
         let response = try await llm.generate(request: request)
-        
-        // 3. Parse Intent
-        // Prioritize pre-extracted JSON from the service
-        let textToParse = response.intentJSON ?? response.text
 
+        // 3. Parse Intent (prefer pre-extracted JSON if available)
+        let textToParse = response.intentJSON ?? response.text
         let parsed = intentParser.parse(response: textToParse)
         await trace.record(
             "intent.process.end",
@@ -207,14 +291,96 @@ public actor ProjectSession: Identifiable {
 
     /// Processes a natural language command and applies it (intent -> typed commands -> timeline mutation).
     public func processAndApplyCommand(_ text: String) async throws -> UserIntent? {
-        let intent = try await processCommand(text)
-        if let intent {
-            await applyIntent(intent)
+        // Minimal batching: allow users to chain discrete edits with "then".
+        // We interpret this as a single undoable action (atomic undo/redo).
+        let clauses = splitClausesOnThen(text)
+
+        // No batching detected.
+        guard clauses.count > 1 else {
+            let intent = try await processCommand(text)
+            if let intent {
+                await applyIntent(intent)
+            }
+            return intent
         }
-        return intent
+
+        await trace.record("intent.batch.begin", fields: ["count": String(clauses.count)])
+
+        let before = state
+        var lastIntent: UserIntent? = nil
+
+        for clause in clauses {
+            let intent = try await processCommand(clause)
+            if let intent {
+                lastIntent = intent
+                await applyIntent(intent, recordUndo: false)
+            }
+        }
+
+        if state != before {
+            let after = state
+            let step = UndoStep(
+                label: "intent.batch",
+                undo: { st in st = before },
+                redo: { st in st = after }
+            )
+            undoStack.append(step)
+            redoStack.removeAll()
+        }
+
+        await trace.record(
+            "intent.batch.end",
+            fields: [
+                "count": String(clauses.count),
+                "didMutate": state == before ? "false" : "true"
+            ]
+        )
+        return lastIntent
+    }
+
+    private func splitClausesOnThen(_ text: String) -> [String] {
+        // Split on word-boundary "then" (case-insensitive), keeping everything else intact.
+        // Examples:
+        // - "move macbeth to 1s then ripple delete zone" => 2 clauses
+        // - "strengthen" (contains "then") => 1 clause (no split)
+        let pattern = "\\bthen\\b"
+        guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return [text.trimmingCharacters(in: .whitespacesAndNewlines)].filter { !$0.isEmpty }
+        }
+
+        let ns = text as NSString
+        let range = NSRange(location: 0, length: ns.length)
+        let matches = re.matches(in: text, range: range)
+        guard !matches.isEmpty else {
+            return [text.trimmingCharacters(in: .whitespacesAndNewlines)].filter { !$0.isEmpty }
+        }
+
+        var clauses: [String] = []
+        var lastEnd = 0
+        for m in matches {
+            let r = m.range
+            if r.location > lastEnd {
+                let seg = ns.substring(with: NSRange(location: lastEnd, length: r.location - lastEnd))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !seg.isEmpty { clauses.append(seg) }
+            }
+            lastEnd = r.location + r.length
+        }
+
+        if lastEnd < ns.length {
+            let seg = ns.substring(with: NSRange(location: lastEnd, length: ns.length - lastEnd))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !seg.isEmpty { clauses.append(seg) }
+        }
+
+        return clauses
     }
 
     public func applyIntent(_ intent: UserIntent) async {
+        await applyIntent(intent, recordUndo: true)
+    }
+
+    private func applyIntent(_ intent: UserIntent, recordUndo: Bool) async {
         await trace.record(
             "intent.apply.begin",
             fields: [
@@ -226,10 +392,28 @@ public actor ProjectSession: Identifiable {
         let commands = IntentCommandRegistry.commands(for: intent)
         await trace.record("intent.commands.built", fields: ["count": String(commands.count)])
 
+        guard !commands.isEmpty else {
+            await trace.record("intent.apply.end", fields: ["count": "0"])
+            return
+        }
+
+        let before = state
+
         var timeline = state.timeline
         let executor = CommandExecutor(trace: trace)
         await executor.execute(commands, in: &timeline)
         state.timeline = timeline
+
+        if recordUndo, state != before {
+            let after = state
+            let step = UndoStep(
+                label: "intent.apply",
+                undo: { st in st = before },
+                redo: { st in st = after }
+            )
+            undoStack.append(step)
+            redoStack.removeAll()
+        }
 
         await trace.record("intent.apply.end", fields: ["count": String(commands.count)])
     }
@@ -238,7 +422,7 @@ public actor ProjectSession: Identifiable {
 
     public func buildPolicyBundle(
         quality: QualityProfile,
-        frameRate: Int32 = 24,
+        frameRate: Int = 24,
         audioPolicy: AudioPolicy = .auto
     ) -> QualityPolicyBundle {
         let license = state.config.license
@@ -270,7 +454,10 @@ public actor ProjectSession: Identifiable {
         let video = VideoContainerPolicy(
             minDurationSeconds: durationSeconds - tol,
             maxDurationSeconds: durationSeconds + tol,
-            expectedWidth: quality.resolutionHeight * 16 / 9,
+            expectedWidth: {
+                let raw = max(2, quality.resolutionHeight * 16 / 9)
+                return (raw % 2 == 0) ? raw : (raw - 1)
+            }(),
             expectedHeight: quality.resolutionHeight,
             expectedNominalFrameRate: fps,
             minVideoSampleCount: minSamples
@@ -289,7 +476,7 @@ public actor ProjectSession: Identifiable {
         using exporter: any VideoExporting,
         to outputURL: URL,
         quality: QualityProfile,
-        frameRate: Int32 = 24,
+        frameRate: Int = 24,
         codec: AVVideoCodecType = .hevc,
         audioPolicy: AudioPolicy = .auto
     ) async throws {
@@ -304,6 +491,8 @@ public actor ProjectSession: Identifiable {
             ]
         )
         let bundle = buildPolicyBundle(quality: quality, frameRate: frameRate, audioPolicy: audioPolicy)
+
+        await traceVFRDecisionsIfNeeded(timeline: state.timeline, exportFrameRate: frameRate)
 
         try await exporter.export(
             timeline: state.timeline,
@@ -323,10 +512,11 @@ public actor ProjectSession: Identifiable {
         to bundleURL: URL,
         deliverable: ExportDeliverable = .youtubeMaster,
         quality: QualityProfile,
-        frameRate: Int32 = 24,
+        frameRate: Int = 24,
         codec: AVVideoCodecType = .hevc,
         audioPolicy: AudioPolicy = .auto,
-        sidecars: [DeliverableSidecarRequest] = []
+        sidecars: [DeliverableSidecarRequest] = [],
+        qcPolicyOverrides: DeterministicQCPolicy? = nil
     ) async throws -> DeliverableManifest {
         await trace.record(
             "session.exportDeliverable.begin",
@@ -341,6 +531,13 @@ public actor ProjectSession: Identifiable {
             ]
         )
         let policyBundle = buildPolicyBundle(quality: quality, frameRate: frameRate, audioPolicy: audioPolicy)
+        let qcPolicy = qcPolicyOverrides ?? policyBundle.qc
+
+        // Best-effort caption discovery: if the timeline clearly comes from a single file URL,
+        // look for sibling caption files (e.g. foo.captions.vtt) and copy them into the bundle.
+        let captionSidecarCandidates = captionSidecarCandidates(from: state.timeline)
+
+        await traceVFRDecisionsIfNeeded(timeline: state.timeline, exportFrameRate: frameRate)
 
         return try await DeliverableWriter.writeBundle(at: bundleURL) { stagingDir in
             let movieURL = stagingDir.appendingPathComponent("video.mov")
@@ -360,7 +557,7 @@ public actor ProjectSession: Identifiable {
             await trace.record("session.exportDeliverable.movie.export.end", fields: ["output": movieURL.lastPathComponent])
 
             await trace.record("session.exportDeliverable.qc.begin", fields: [:])
-            let report = try await VideoQC.validateMovie(at: movieURL, policy: policyBundle.qc)
+            let report = try await VideoQC.validateMovie(at: movieURL, policy: qcPolicy)
             let qcReport = DeterministicQCReport(
                 durationSeconds: report.durationSeconds,
                 width: report.width,
@@ -386,7 +583,7 @@ public actor ProjectSession: Identifiable {
                 audioSampleRateHz: metadata.audio?.sampleRateHz
             )
 
-            let minDistance = 0.020
+            let minDistance = max(0.0, qcPolicy.content?.minAdjacentDistance ?? 0.020)
             let duration = max(0.0, qcReport.durationSeconds)
             // Keep samples strictly inside the timeline to avoid edge cases where a sample lands exactly at
             // (or beyond) duration and yields no decodable frames.
@@ -399,24 +596,26 @@ public actor ProjectSession: Identifiable {
 
             let fps = try await VideoContentQC.fingerprints(movieURL: movieURL, samples: samples)
 
-            // Deterministic content metrics (histogram-derived luma stats). We keep expectations fully permissive
-            // so this never fails export; the goal is to record measured metrics in the manifest.
+            // Deterministic content metrics (histogram-derived luma stats).
+            // By default we keep expectations permissive so this never fails export. Policy can opt-in to enforcement.
+            let colorPolicy = qcPolicy.content?.colorStats
+            let enforceColorStats = colorPolicy?.enforce == true
             let colorStatsSamples: [VideoContentQC.ColorStatsSample] = samples.map {
                 .init(
                     timeSeconds: $0.timeSeconds,
                     label: $0.label,
-                    minMeanLuma: 0,
-                    maxMeanLuma: 1,
-                    maxChannelDelta: 1,
-                    minLowLumaFraction: 0,
-                    minHighLumaFraction: 0
+                    minMeanLuma: enforceColorStats ? (colorPolicy?.minMeanLuma ?? 0) : 0,
+                    maxMeanLuma: enforceColorStats ? (colorPolicy?.maxMeanLuma ?? 1) : 1,
+                    maxChannelDelta: enforceColorStats ? (colorPolicy?.maxChannelDelta ?? 1) : 1,
+                    minLowLumaFraction: enforceColorStats ? (colorPolicy?.minLowLumaFraction ?? 0) : 0,
+                    minHighLumaFraction: enforceColorStats ? (colorPolicy?.minHighLumaFraction ?? 0) : 0
                 )
             }
 
             let colorStatsResults = try await VideoContentQC.validateColorStats(
                 movieURL: movieURL,
                 samples: colorStatsSamples,
-                maxDimension: 256
+                maxDimension: max(16, colorPolicy?.maxDimension ?? 256)
             )
 
             await trace.record("session.exportDeliverable.qc.end", fields: [:])
@@ -468,7 +667,7 @@ public actor ProjectSession: Identifiable {
 
             // Policy-driven gating: only enforce temporal-variety when a timeline plausibly expects change.
             // (e.g. multi-clip edits). Always record the distances.
-            let enforceTemporalVariety = videoClipCount >= 2
+            let enforceTemporalVariety = (qcPolicy.content?.enforceTemporalVarietyIfMultipleClips ?? true) && videoClipCount >= 2
             var violations: [DeliverableContentQCReport.AdjacentDistance] = []
             violations.reserveCapacity(2)
 
@@ -519,13 +718,18 @@ public actor ProjectSession: Identifiable {
                     switch request {
                     case .captionsVTT(let fileName, _):
                         let url = stagingDir.appendingPathComponent(fileName)
-                        try await CaptionSidecarWriter.writeWebVTT(to: url)
+                        try await CaptionSidecarWriter.writeWebVTT(to: url, sidecarCandidates: captionSidecarCandidates)
                         writtenSidecars.append(DeliverableSidecar(kind: .captionsVTT, fileName: fileName))
 
                     case .captionsSRT(let fileName, _):
                         let url = stagingDir.appendingPathComponent(fileName)
-                        try await CaptionSidecarWriter.writeSRT(to: url)
+                        try await CaptionSidecarWriter.writeSRT(to: url, sidecarCandidates: captionSidecarCandidates)
                         writtenSidecars.append(DeliverableSidecar(kind: .captionsSRT, fileName: fileName))
+
+                    case .transcriptWordsJSON(let fileName, let cues, _):
+                        let url = stagingDir.appendingPathComponent(fileName)
+                        try await TranscriptSidecarWriter.writeTranscriptWordsJSON(to: url, sidecarCandidates: captionSidecarCandidates, cues: cues)
+                        writtenSidecars.append(DeliverableSidecar(kind: .transcriptWordsJSON, fileName: fileName))
 
                     case .thumbnailJPEG(let fileName, _):
                         let url = stagingDir.appendingPathComponent(fileName)
@@ -567,8 +771,14 @@ public actor ProjectSession: Identifiable {
                 let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
                 let size = (attrs[.size] as? NSNumber)?.intValue ?? 0
                 if size <= 0 {
-                    // Treat empty sidecars as a failure. Required requests already threw on write;
-                    // for optional, record and continue.
+                    // Caption sidecars are allowed to be empty (no cues).
+                    // VTT will still be non-empty due to its header; SRT may be a 0-byte file.
+                    if s.kind == .captionsSRT {
+                        writtenEntries.append(.init(kind: s.kind, fileName: s.fileName, fileBytes: size))
+                        continue
+                    }
+
+                    // Treat other empty sidecars as a failure.
                     let key = "\(s.kind.rawValue)|\(s.fileName)"
                     if requiredByKey[key] == true {
                         throw NSError(
@@ -598,11 +808,11 @@ public actor ProjectSession: Identifiable {
                 deliverable: deliverable,
                 timeline: TimelineSummary.fromTimeline(state.timeline),
                 quality: quality,
-                frameRate: frameRate,
+                frameRate: Int32(frameRate),
                 codec: codec.rawValue,
                 audioPolicy: audioPolicy,
                 governance: policyBundle.export,
-                qcPolicy: policyBundle.qc,
+                qcPolicy: qcPolicy,
                 qcReport: qcReport,
                 qcContentReport: qcContentReport,
                 qcMetadataReport: qcMetadataReport,
@@ -610,6 +820,199 @@ public actor ProjectSession: Identifiable {
                 sidecars: writtenSidecars
             )
         }
+    }
+
+    private func captionSidecarCandidates(from timeline: Timeline) -> [URL] {
+        // Prefer video clips, since those are most likely to carry spoken content.
+        let preferred = uniqueFileURLs(from: timeline, preferredTrackKind: .video)
+        if preferred.count == 1 {
+            return captionSidecarCandidates(forSingleSource: preferred[0])
+        }
+
+        // Fall back to any clip sources.
+        let all = uniqueFileURLs(from: timeline, preferredTrackKind: nil)
+        if all.count == 1 {
+            return captionSidecarCandidates(forSingleSource: all[0])
+        }
+
+        // Multiple sources: do not guess.
+        return []
+    }
+
+    private func uniqueFileURLs(from timeline: Timeline, preferredTrackKind: TrackKind?) -> [URL] {
+        let tracks = preferredTrackKind == nil
+            ? timeline.tracks
+            : timeline.tracks.filter { $0.kind == preferredTrackKind }
+
+        var seen: Set<String> = []
+        var out: [URL] = []
+
+        for track in tracks {
+            for clip in track.clips {
+                guard let url = parseLocalFileURL(from: clip.asset.sourceFn) else { continue }
+                let key = url.standardizedFileURL.path
+                guard !seen.contains(key) else { continue }
+                seen.insert(key)
+                out.append(url)
+            }
+        }
+
+        return out
+    }
+
+    private func parseLocalFileURL(from sourceFn: String) -> URL? {
+        if let url = URL(string: sourceFn), url.isFileURL {
+            return url
+        }
+
+        // Some recipes may pass a raw path.
+        if sourceFn.hasPrefix("/") {
+            let url = URL(fileURLWithPath: sourceFn)
+            if FileManager.default.fileExists(atPath: url.path) {
+                return url
+            }
+        }
+
+        return nil
+    }
+
+    private func captionSidecarCandidates(forSingleSource sourceURL: URL) -> [URL] {
+        let dir = sourceURL.deletingLastPathComponent()
+        let stem = sourceURL.deletingPathExtension().lastPathComponent
+        return [
+            dir.appendingPathComponent(stem + ".captions.vtt"),
+            dir.appendingPathComponent(stem + ".vtt"),
+            dir.appendingPathComponent(stem + ".captions.srt"),
+            dir.appendingPathComponent(stem + ".srt")
+        ]
+    }
+
+    private func traceVFRDecisionsIfNeeded(timeline: Timeline, exportFrameRate: Int) async {
+        let urls = uniqueFileURLs(from: timeline, preferredTrackKind: .video)
+        if urls.isEmpty { return }
+
+        // Keep export deterministic and reasonably fast: probe only a few sources.
+        let maxProbeCount = 3
+        for url in urls.prefix(maxProbeCount) {
+            let ext = url.pathExtension.lowercased()
+            let isLikelyVideo = ["mov", "mp4", "m4v"].contains(ext)
+            if !isLikelyVideo { continue }
+
+            do {
+                let profile = try await VideoTimingProbe.probe(url: url)
+                let decision = VideoTimingNormalization.decide(profile: profile, fallbackFPS: Double(max(1, exportFrameRate)))
+                await trace.record(
+                    "session.export.vfrDecision",
+                    fields: [
+                        "source": url.lastPathComponent,
+                        "nominalFPS": profile.nominalFPS.map { String(format: "%.3f", $0) } ?? "nil",
+                        "estimatedFPS": profile.estimatedFPS.map { String(format: "%.3f", $0) } ?? "nil",
+                        "vfrLikely": String(profile.isVFRLikely),
+                        "mode": decision.mode.rawValue,
+                        "targetFPS": String(format: "%.3f", decision.targetFPS),
+                        "exportFPS": String(exportFrameRate)
+                    ]
+                )
+            } catch {
+                await trace.record(
+                    "session.export.vfrDecision.error",
+                    fields: [
+                        "source": url.lastPathComponent,
+                        "error": String(describing: error)
+                    ]
+                )
+            }
+        }
+    }
+
+    public func exportBatch(
+        using exporter: any VideoExporting,
+        to baseDirectory: URL,
+        deliverables: [ExportDeliverable],
+        quality: QualityProfile,
+        frameRate: Int = 24,
+        codec: AVVideoCodecType = .hevc,
+        audioPolicy: AudioPolicy = .auto,
+        sidecars: [DeliverableSidecarRequest] = [],
+        qcPolicyOverrides: DeterministicQCPolicy? = nil
+    ) async throws -> [DeliverableManifest] {
+        await trace.record(
+            "session.exportBatch.begin",
+            fields: [
+                "base": baseDirectory.lastPathComponent,
+                "count": String(deliverables.count),
+                "quality": quality.name,
+                "fps": String(frameRate),
+                "codec": codec.rawValue,
+                "audioPolicy": String(describing: audioPolicy),
+                "sidecars": String(sidecars.count)
+            ]
+        )
+
+        if deliverables.isEmpty {
+            await trace.record("session.exportBatch.end", fields: ["count": "0"])
+            return []
+        }
+
+        try FileManager.default.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
+
+        var manifests: [DeliverableManifest] = []
+        manifests.reserveCapacity(deliverables.count)
+
+        for deliverable in deliverables {
+            let bundleURL = baseDirectory.appendingPathComponent(deliverable.id, isDirectory: true)
+
+            await trace.record(
+                "session.exportBatch.item.begin",
+                fields: [
+                    "bundle": bundleURL.lastPathComponent,
+                    "deliverable": deliverable.id
+                ]
+            )
+
+            do {
+                let manifest = try await exportDeliverable(
+                    using: exporter,
+                    to: bundleURL,
+                    deliverable: deliverable,
+                    quality: quality,
+                    frameRate: frameRate,
+                    codec: codec,
+                    audioPolicy: audioPolicy,
+                    sidecars: sidecars,
+                    qcPolicyOverrides: qcPolicyOverrides
+                )
+                manifests.append(manifest)
+
+                await trace.record(
+                    "session.exportBatch.item.end",
+                    fields: [
+                        "bundle": bundleURL.lastPathComponent,
+                        "deliverable": deliverable.id
+                    ]
+                )
+            } catch {
+                await trace.record(
+                    "session.exportBatch.item.error",
+                    fields: [
+                        "bundle": bundleURL.lastPathComponent,
+                        "deliverable": deliverable.id,
+                        "error": String(describing: error)
+                    ]
+                )
+                await trace.record(
+                    "session.exportBatch.error",
+                    fields: [
+                        "deliverable": deliverable.id,
+                        "exported": String(manifests.count)
+                    ]
+                )
+                throw error
+            }
+        }
+
+        await trace.record("session.exportBatch.end", fields: ["count": String(manifests.count)])
+        return manifests
     }
 }
 
@@ -620,11 +1023,49 @@ private extension DeliverableSidecarRequest {
             return DeliverableSidecar(kind: .captionsVTT, fileName: fileName)
         case .captionsSRT(let fileName, _):
             return DeliverableSidecar(kind: .captionsSRT, fileName: fileName)
+        case .transcriptWordsJSON(let fileName, _, _):
+            return DeliverableSidecar(kind: .transcriptWordsJSON, fileName: fileName)
         case .thumbnailJPEG(let fileName, _):
             return DeliverableSidecar(kind: .thumbnailJPEG, fileName: fileName)
         case .contactSheetJPEG(let fileName, _, _, _):
             return DeliverableSidecar(kind: .contactSheetJPEG, fileName: fileName)
         }
+    }
+}
+
+// MARK: - Project persistence
+
+public extension ProjectSession {
+
+    /// Saves the current project state as a deterministic JSON document.
+    ///
+    /// Note: by default, this does not persist `visualContext` because it is transient and can contain
+    /// privacy-sensitive content.
+    func saveProject(
+        to url: URL,
+        recipeID: String? = nil,
+        createdAt: String? = nil,
+        updatedAt: String? = nil,
+        includeVisualContext: Bool = false
+    ) throws {
+        try ProjectPersistence.save(
+            state: state,
+            to: url,
+            recipeID: recipeID,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            includeVisualContext: includeVisualContext
+        )
+    }
+
+    /// Loads a project JSON document and returns a new session.
+    static func loadProject(
+        from url: URL,
+        entitlements: EntitlementManager = EntitlementManager(),
+        trace: any TraceSink = NoOpTraceSink()
+    ) throws -> ProjectSession {
+        let doc = try ProjectPersistence.load(from: url)
+        return ProjectSession(initialState: doc.state, entitlements: entitlements, trace: trace)
     }
 }
 

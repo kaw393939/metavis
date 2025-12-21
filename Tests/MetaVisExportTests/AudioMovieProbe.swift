@@ -10,18 +10,19 @@ public enum AudioMovieProbe {
     }
 
     public static func peak(at url: URL, startSeconds: Double, durationSeconds: Double) async throws -> Float {
-        let (peak, _) = try readPeakAndRMS(at: url, startSeconds: startSeconds, durationSeconds: durationSeconds)
+        let (peak, _) = try await readPeakAndRMS(at: url, startSeconds: startSeconds, durationSeconds: durationSeconds)
         return peak
     }
 
     public static func rms(at url: URL, startSeconds: Double, durationSeconds: Double) async throws -> Float {
-        let (_, rms) = try readPeakAndRMS(at: url, startSeconds: startSeconds, durationSeconds: durationSeconds)
+        let (_, rms) = try await readPeakAndRMS(at: url, startSeconds: startSeconds, durationSeconds: durationSeconds)
         return rms
     }
 
-    private static func readPeakAndRMS(at url: URL, startSeconds: Double, durationSeconds: Double) throws -> (peak: Float, rms: Float) {
+    private static func readPeakAndRMS(at url: URL, startSeconds: Double, durationSeconds: Double) async throws -> (peak: Float, rms: Float) {
         let asset = AVURLAsset(url: url)
-        guard let track = asset.tracks(withMediaType: .audio).first else {
+        let tracks = try await asset.loadTracks(withMediaType: .audio)
+        guard let track = tracks.first else {
             throw NSError(domain: "MetaVisTest", code: 1, userInfo: [NSLocalizedDescriptionKey: "No audio track"])
         }
 

@@ -70,5 +70,63 @@ final class GeminiPromptBuilderTests: XCTestCase {
         XCTAssertTrue(verdict.accepted)
         XCTAssertTrue(verdict.rawText.contains("SKIPPED"))
         XCTAssertTrue(verdict.rawText.contains("AIUsagePolicy"))
+        XCTAssertNil(verdict.model)
+    }
+
+    func test_buildPrompt_redacts_file_paths_and_identifiers_when_enabled() {
+        let policy = AIUsagePolicy(
+            mode: .textOnly,
+            mediaSource: .deliverablesOnly,
+            redaction: .init(redactFilePaths: true, redactIdentifiers: true)
+        )
+        let privacy = PrivacyPolicy(allowRawMediaUpload: false, allowDeliverablesUpload: true)
+
+        let narrative = "Export /Users/alice/SecretProject/video.mov for user bob@example.com id=123e4567-e89b-12d3-a456-426614174000"
+        let context = GeminiPromptBuilder.PromptContext(
+            expectedNarrative: narrative,
+            keyFrameLabels: ["p50"],
+            policy: policy,
+            privacy: privacy,
+            modelHint: "gemini-2.5-flash",
+            metrics: nil
+        )
+
+        let prompt = GeminiPromptBuilder.buildPrompt(context, notes: ["See /Users/alice/SecretProject/notes.txt"]) 
+        XCTAssertFalse(prompt.contains("/Users/alice/SecretProject"))
+        XCTAssertTrue(prompt.contains("video.mov"))
+        XCTAssertTrue(prompt.contains("<EMAIL>"))
+        XCTAssertTrue(prompt.contains("<UUID>"))
+        XCTAssertFalse(prompt.contains("bob@example.com"))
+        XCTAssertFalse(prompt.contains("123e4567-e89b-12d3-a456-426614174000"))
+        XCTAssertTrue(prompt.contains("notes.txt"))
+    }
+
+    func test_buildPrompt_does_not_redact_when_disabled() {
+        let policy = AIUsagePolicy(
+            mode: .textOnly,
+            mediaSource: .deliverablesOnly,
+            redaction: .init(redactFilePaths: false, redactIdentifiers: false)
+        )
+        let privacy = PrivacyPolicy(allowRawMediaUpload: false, allowDeliverablesUpload: true)
+
+        let narrative = "Export /Users/alice/SecretProject/video.mov for user bob@example.com id=123e4567-e89b-12d3-a456-426614174000"
+        let context = GeminiPromptBuilder.PromptContext(
+            expectedNarrative: narrative,
+            keyFrameLabels: [],
+            policy: policy,
+            privacy: privacy
+        )
+
+        let prompt = GeminiPromptBuilder.buildPrompt(context)
+        XCTAssertTrue(prompt.contains("/Users/alice/SecretProject/video.mov"))
+        XCTAssertTrue(prompt.contains("bob@example.com"))
+        XCTAssertTrue(prompt.contains("123e4567-e89b-12d3-a456-426614174000"))
+    }
+
+    func test_geminiQC_verdict_isCodable_and_preserves_model() throws {
+        let verdict = GeminiQC.Verdict(accepted: true, rawText: "OK", model: "gemini-2.5-flash")
+        let data = try JSONEncoder().encode(verdict)
+        let decoded = try JSONDecoder().decode(GeminiQC.Verdict.self, from: data)
+        XCTAssertEqual(decoded, verdict)
     }
 }

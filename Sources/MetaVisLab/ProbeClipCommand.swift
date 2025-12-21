@@ -1,6 +1,7 @@
 import Foundation
 import Metal
 import MetaVisSimulation
+import MetaVisIngest
 import AVFoundation
 
 enum ProbeClipCommand {
@@ -65,6 +66,23 @@ enum ProbeClipCommand {
 
         print("probe-clip: \(url.lastPathComponent) (\(width)x\(height))")
         print(String(format: "range: start=%.3fs end=%.3fs step=%.5fs", startSeconds, endSeconds, stepSeconds))
+
+        // Timing probe / VFR heuristic (compressed sample read; no full decode).
+        do {
+            let timing = try await VideoTimingProbe.probe(url: url)
+            let decision = VideoTimingNormalization.decide(profile: timing, fallbackFPS: 24.0)
+            let nominalStr = timing.nominalFPS.map { String(format: "%.3f", $0) } ?? "nil"
+            let estStr = timing.estimatedFPS.map { String(format: "%.3f", $0) } ?? "nil"
+            print("timing: nominalFPS=\(nominalStr) estimatedFPS=\(estStr) vfrLikely=\(timing.isVFRLikely)")
+            if let deltas = timing.deltas {
+                print(String(format: "timing: deltas n=%d min=%.6fs max=%.6fs mean=%.6fs std=%.6fs distinct=%d",
+                             deltas.sampleCount, deltas.minSeconds, deltas.maxSeconds, deltas.meanSeconds, deltas.stdDevSeconds, deltas.distinctDeltaCount))
+            }
+            print(String(format: "normalize: mode=%@ targetFPS=%.3f step=%.6fs reason=%@",
+                         decision.mode.rawValue, decision.targetFPS, decision.frameStepSeconds, decision.reason))
+        } catch {
+            print("timing: error: \(error)")
+        }
 
         // Sanity: prove AVAssetReader works in this process (isolates ClipReader issues).
         do {

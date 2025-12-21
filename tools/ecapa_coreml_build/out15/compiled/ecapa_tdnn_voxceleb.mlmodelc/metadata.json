@@ -1,0 +1,90 @@
+[
+  {
+    "metadataOutputVersion" : "3.0",
+    "storagePrecision" : "Float16",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 192)",
+        "shortDescription" : "",
+        "shape" : "[1, 192]",
+        "name" : "var_563",
+        "type" : "MultiArray"
+      }
+    ],
+    "modelParameters" : [
+
+    ],
+    "specificationVersion" : 8,
+    "mlProgramOperationTypeHistogram" : {
+      "Ios17.reshape" : 5,
+      "Ios16.reduceMean" : 3,
+      "Ios17.scatter" : 1,
+      "Ios16.softmax" : 1,
+      "Ios17.maximum" : 1,
+      "Ios17.transpose" : 3,
+      "Split" : 3,
+      "Ios17.expandDims" : 5,
+      "Ios16.reduceMax" : 1,
+      "Ios17.add" : 21,
+      "Ios17.sliceByIndex" : 1,
+      "Ios16.reduceSum" : 5,
+      "Ios16.sigmoid" : 3,
+      "Tile" : 2,
+      "Ios17.squeeze" : 1,
+      "Pad" : 23,
+      "Ios17.log" : 1,
+      "Ios17.batchNorm" : 31,
+      "Ios17.conv" : 40,
+      "Ios17.sub" : 4,
+      "Ios17.clip" : 3,
+      "Ios16.relu" : 33,
+      "Ios17.pow" : 3,
+      "Ios17.linear" : 1,
+      "Stack" : 1,
+      "Ios17.cast" : 1,
+      "Ios17.concat" : 6,
+      "Ios17.sqrt" : 2,
+      "Ios17.tanh" : 1,
+      "Ios17.mul" : 9
+    },
+    "computePrecision" : "Mixed (Float16, Float32, Int32)",
+    "isUpdatable" : "0",
+    "stateSchema" : [
+
+    ],
+    "availability" : {
+      "macOS" : "14.0",
+      "tvOS" : "17.0",
+      "visionOS" : "1.0",
+      "watchOS" : "10.0",
+      "iOS" : "17.0",
+      "macCatalyst" : "17.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.conversion_date" : "2025-12-20",
+      "com.github.apple.coremltools.source" : "torch==2.9.1",
+      "com.github.apple.coremltools.version" : "9.0",
+      "com.github.apple.coremltools.source_dialect" : "TorchScript"
+    },
+    "inputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 1 × 24000)",
+        "shortDescription" : "",
+        "shape" : "[1, 24000]",
+        "name" : "audio",
+        "type" : "MultiArray"
+      }
+    ],
+    "generatedClassName" : "ecapa_tdnn_voxceleb",
+    "method" : "predict"
+  }
+]

@@ -6,7 +6,7 @@ import MetaVisAudio
 
 final class DialogCleanwaterTests: XCTestCase {
 
-    func testDialogCleanwaterIncreasesPeakDeterministically() throws {
+    func testDialogCleanwaterIncreasesPeakDeterministically() async throws {
         let duration = Time(seconds: 1.0)
 
         func makeTimeline(withCleanwater: Bool) -> Timeline {
@@ -38,12 +38,12 @@ final class DialogCleanwaterTests: XCTestCase {
         }
 
         let rendererA = AudioTimelineRenderer()
-        let bufNo = try rendererA.render(timeline: makeTimeline(withCleanwater: false), timeRange: .zero..<duration)
+        let bufNo = try await rendererA.render(timeline: makeTimeline(withCleanwater: false), timeRange: .zero..<duration)
         XCTAssertNotNil(bufNo)
         let peakNo = peak(of: try XCTUnwrap(bufNo))
 
         let rendererB = AudioTimelineRenderer()
-        let bufYes = try rendererB.render(timeline: makeTimeline(withCleanwater: true), timeRange: .zero..<duration)
+        let bufYes = try await rendererB.render(timeline: makeTimeline(withCleanwater: true), timeRange: .zero..<duration)
         XCTAssertNotNil(bufYes)
         let peakYes = peak(of: try XCTUnwrap(bufYes))
 

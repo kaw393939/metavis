@@ -2,6 +2,23 @@ import AVFoundation
 import AudioToolbox
 import MetaVisCore
 
+public struct AudioDynamicsSettings: Sendable, Equatable {
+    public var enabled: Bool
+    /// Threshold in dBFS (negative values, e.g. -16).
+    public var thresholdDB: Float
+    /// Compression ratio (>= 1). Example: 4 means 4:1.
+    public var ratio: Float
+    /// Optional makeup gain applied after compression.
+    public var makeupGainDB: Float
+
+    public init(enabled: Bool = false, thresholdDB: Float = -16.0, ratio: Float = 3.0, makeupGainDB: Float = 0.0) {
+        self.enabled = enabled
+        self.thresholdDB = thresholdDB
+        self.ratio = ratio
+        self.makeupGainDB = makeupGainDB
+    }
+}
+
 /// Represents a chain of audio processing effects for mastering.
 /// This acts as the "AI Engineer's" mixing console.
 public class AudioMasteringChain {
@@ -9,7 +26,9 @@ public class AudioMasteringChain {
     // Nodes
     private let inputMixer = AVAudioMixerNode()
     private let eqNode = AVAudioUnitEQ(numberOfBands: 3)
-    // NOTE: DynamicsProcessor removed due to build unavailability. Using EQ Global Gain for leveling.
+
+    // Deterministic offline dynamics (applied post-render by AudioTimelineRenderer).
+    private var dynamicsSettings = AudioDynamicsSettings()
     
     // Internal state
     private var isAttached = false
@@ -51,6 +70,14 @@ public class AudioMasteringChain {
         isAttached = true
         return (inputMixer, eqNode)
     }
+
+    public func setDynamicsSettings(_ settings: AudioDynamicsSettings) {
+        self.dynamicsSettings = settings
+    }
+
+    public func dynamicsSettingsSnapshot() -> AudioDynamicsSettings {
+        return dynamicsSettings
+    }
     
     /// Apply "Engineer" settings based on analysis.
     public func applyEngineerSettings(
@@ -66,6 +93,11 @@ public class AudioMasteringChain {
         
         // 3. Apply to EQ Global Gain
         eqNode.globalGain = safeGain
+
+        // Enable a mild deterministic compressor when we are applying non-trivial gain.
+        if abs(safeGain) >= 3.0 {
+            dynamicsSettings = AudioDynamicsSettings(enabled: true, thresholdDB: -12.0, ratio: 3.0, makeupGainDB: 0.0)
+        }
         
         print("AI Engineer: Applied Gain \(safeGain)dB. Target: \(targetLUFS), Current: \(currentAnalysis.lufs)")
     }
@@ -77,7 +109,7 @@ public class AudioMasteringChain {
     /// Deterministic dialog cleanup preset.
     ///
     /// v1 goal: reduce low-frequency rumble, add intelligibility presence, and raise overall level.
-    public func applyDialogCleanwaterPresetV1() {
+    public func applyDialogCleanwaterPresetV1(globalGainDB: Float = 6.0) {
         // Low shelf: attenuate lows
         eqNode.bands[0].filterType = .lowShelf
         eqNode.bands[0].frequency = 120.0
@@ -94,7 +126,10 @@ public class AudioMasteringChain {
         eqNode.bands[2].frequency = 9000.0
         eqNode.bands[2].gain = 1.0
 
-        // Fixed gain lift (deterministic)
-        eqNode.globalGain = 6.0
+        // Fixed gain lift (deterministic, caller-bounded)
+        eqNode.globalGain = globalGainDB
+
+        // Dialog cleanup benefits from mild dynamics to reduce harsh peaks.
+        dynamicsSettings = AudioDynamicsSettings(enabled: true, thresholdDB: -16.0, ratio: 2.5, makeupGainDB: 0.0)
     }
 }

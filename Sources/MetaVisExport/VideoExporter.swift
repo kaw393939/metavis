@@ -12,6 +12,16 @@ public actor VideoExporter: VideoExporting {
     
     private let device: any RenderDevice
     private let trace: any TraceSink
+
+    /// Optional provider for per-frame metadata used by the render-graph compiler
+    /// (e.g. face rectangles for mask-driven effects).
+    public var frameContextProvider: (@Sendable (_ timeline: Timeline, _ time: Time) -> RenderFrameContext?)? = nil
+
+    public func setFrameContextProvider(
+        _ provider: (@Sendable (_ timeline: Timeline, _ time: Time) -> RenderFrameContext?)?
+    ) {
+        self.frameContextProvider = provider
+    }
     
     public init(engine: MetalSimulationEngine, trace: any TraceSink = NoOpTraceSink()) {
         self.device = MetalRenderDevice(engine: engine)
@@ -111,6 +121,26 @@ public actor VideoExporter: VideoExporting {
         audioPolicy: AudioPolicy = .auto,
         governance: ExportGovernance = .none
     ) async throws {
+        try await export(
+            timeline: timeline,
+            to: outputURL,
+            quality: quality,
+            frameRate: Int(frameRate),
+            codec: codec,
+            audioPolicy: audioPolicy,
+            governance: governance
+        )
+    }
+
+    public func export(
+        timeline: Timeline,
+        to outputURL: URL,
+        quality: QualityProfile,
+        frameRate: Int = 24,
+        codec: AVVideoCodecType = .hevc,
+        audioPolicy: AudioPolicy = .auto,
+        governance: ExportGovernance = .none
+    ) async throws {
 
         do {
 
@@ -153,7 +183,8 @@ public actor VideoExporter: VideoExporting {
             } else {
                 pixelFormat = kCVPixelFormatType_64RGBAHalf
             }
-        
+
+            let exportWidth = Self.exportWidth(forHeight: quality.resolutionHeight)
         // Compression Settings
               var compressionProperties: [String: Any] = [:]
               if codec == .hevc {
@@ -163,18 +194,16 @@ public actor VideoExporter: VideoExporting {
                   }
 
                   // Ensure a sane bitrate floor so very short exports aren't tiny.
-                  let width = quality.resolutionHeight * 16 / 9
+                  let width = exportWidth
                   let height = quality.resolutionHeight
-                  let fps = max(1, Int(frameRate))
+                  let fps = max(1, frameRate)
                   let estimatedBitrate = Int(Double(width * height * fps) * 0.08) // ~0.08 bpp for HEVC
                   let targetBitrate = max(8_000_000, estimatedBitrate)
 
                   // AVFoundation keys
                   compressionProperties[AVVideoAverageBitRateKey] = targetBitrate
                   compressionProperties[AVVideoExpectedSourceFrameRateKey] = fps
-                  compressionProperties[AVVideoMaxKeyFrameIntervalKey] = fps
-
-                  // VideoToolbox keys (some encoders honor these more reliably)
+                                    compressionProperties[AVVideoMaxKeyFrameIntervalKey] = fps
                   compressionProperties[kVTCompressionPropertyKey_AverageBitRate as String] = targetBitrate
                   compressionProperties[kVTCompressionPropertyKey_ExpectedFrameRate as String] = fps
                   compressionProperties[kVTCompressionPropertyKey_MaxKeyFrameInterval as String] = fps
@@ -183,14 +212,20 @@ public actor VideoExporter: VideoExporting {
         
             var outputSettings: [String: Any] = [
                 AVVideoCodecKey: codec,
-                AVVideoWidthKey: quality.resolutionHeight * 16 / 9, // Assuming 16:9 aspect
+                AVVideoWidthKey: exportWidth, // 16:9, even width
                 AVVideoHeightKey: quality.resolutionHeight
+            ]
+
+            // Explicitly tag SDR exports. Without this, some players will guess and can
+            // display noticeably incorrect chroma/tones (and ffprobe will show nulls).
+            outputSettings[AVVideoColorPropertiesKey] = [
+                AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2
             ]
             if !compressionProperties.isEmpty {
                 outputSettings[AVVideoCompressionPropertiesKey] = compressionProperties
             }
-        
-        // Video Input
             let input = AVAssetWriterInput(mediaType: .video, outputSettings: outputSettings)
             input.expectsMediaDataInRealTime = false
         
@@ -199,7 +234,7 @@ public actor VideoExporter: VideoExporting {
                 assetWriterInput: input,
                 sourcePixelBufferAttributes: [
                     kCVPixelBufferPixelFormatTypeKey as String: pixelFormat,
-                    kCVPixelBufferWidthKey as String: quality.resolutionHeight * 16 / 9,
+                    kCVPixelBufferWidthKey as String: exportWidth,
                     kCVPixelBufferHeightKey as String: quality.resolutionHeight,
                     kCVPixelBufferMetalCompatibilityKey as String: true,
                     kCVPixelBufferIOSurfacePropertiesKey as String: [:]
@@ -257,12 +292,15 @@ public actor VideoExporter: VideoExporting {
         // 2. Parallel Transcode
         // We Use a TaskGroup to separate Video and Audio encoding.
         // We run this in a nonisolated helper to ensure tasks don't serialize on the VideoExporter actor.
+
+            let frameContextProvider = self.frameContextProvider
         
             let counts = try await runParallelExport(
                 timeline: timeline,
                 quality: quality,
                 frameRate: frameRate,
                 watermarkSpec: governance.watermarkSpec,
+                frameContextProvider: frameContextProvider,
                 writer: writer,
                 input: input,
                 audioInput: audioInput,
@@ -380,6 +418,8 @@ public actor VideoExporter: VideoExporting {
     ) throws {
         let start = DispatchTime.now().uptimeNanoseconds
         let timeoutNanos = UInt64(max(0.0, timeoutSeconds) * 1_000_000_000.0)
+        var lastLogNanos: UInt64 = start
+        let logEveryNanos: UInt64 = 5_000_000_000 // 5s
 
         while !input.isReadyForMoreMediaData {
             if writer.status != .writing {
@@ -391,6 +431,19 @@ public actor VideoExporter: VideoExporting {
             }
 
             let now = DispatchTime.now().uptimeNanoseconds
+
+            // Periodic breadcrumb so long backpressure doesn't look like a hang.
+            if now &- lastLogNanos >= logEveryNanos {
+                let waitedSeconds = Double(now &- start) / 1_000_000_000.0
+                let msg = "⏳ Waiting for \(kind) input readiness (\(String(format: "%.1f", waitedSeconds))s)\n"
+                if let d = msg.data(using: .utf8), let h = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/metavis_debug.log")) {
+                    h.seekToEndOfFile(); h.write(d); try? h.close()
+                } else {
+                    try? msg.write(to: URL(fileURLWithPath: "/tmp/metavis_debug.log"), atomically: true, encoding: .utf8)
+                }
+                lastLogNanos = now
+            }
+
             if now &- start > timeoutNanos {
                 throw writer.error ?? NSError(
                     domain: "MetaVisExport",
@@ -405,8 +458,9 @@ public actor VideoExporter: VideoExporting {
     private nonisolated func runParallelExport(
         timeline: Timeline,
         quality: QualityProfile,
-        frameRate: Int32,
+        frameRate: Int,
         watermarkSpec: WatermarkSpec?,
+        frameContextProvider: (@Sendable (_ timeline: Timeline, _ time: Time) -> RenderFrameContext?)?,
         writer: AVAssetWriter,
         input: AVAssetWriterInput,
         audioInput: AVAssetWriterInput?,
@@ -447,16 +501,24 @@ public actor VideoExporter: VideoExporting {
                     let audioRenderer = AudioTimelineRenderer()
                     let sampleRate: Double = 48_000
                     let totalRange = Time.zero..<timeline.duration
+                    // On long/heavy exports, audio can get far ahead of video and AVAssetWriter can apply backpressure
+                    // for extended periods. Scale the wait to avoid false timeouts.
+                    let audioBackpressureTimeout = max(60.0, min(7_200.0, timeline.duration.seconds * 2.0))
 
                     var samplesWritten: Int64 = 0
-                    try audioRenderer.renderChunks(
+                    try await audioRenderer.renderChunks(
                         timeline: timeline,
                         timeRange: totalRange,
                         sampleRate: sampleRate,
                         maximumFrameCount: 4096
                     ) { pcmBuffer, _ in
                         // Backpressure
-                        try VideoExporter.waitReadyForMoreMediaDataSync(audioInput, writer: writer, kind: "audio")
+                        try VideoExporter.waitReadyForMoreMediaDataSync(
+                            audioInput,
+                            writer: writer,
+                            kind: "audio",
+                            timeoutSeconds: audioBackpressureTimeout
+                        )
 
                         if writer.status != .writing {
                             throw writer.error ?? NSError(domain: "MetaVisExport", code: 14, userInfo: [NSLocalizedDescriptionKey: "Writer not writing during audio encode: \(writer.status.rawValue)"])
@@ -495,14 +557,14 @@ public actor VideoExporter: VideoExporting {
                     if writer.status != .writing {
                         throw writer.error ?? NSError(domain: "MetaVisExport", code: 13, userInfo: [NSLocalizedDescriptionKey: "Writer not writing during video encode: \(writer.status.rawValue)"])
                     }
-                    let timeSeconds = Double(i) / Double(frameRate)
+                    // Use exact rational time at the export timebase (avoids Double drift).
+                    let renderTime = Time(Rational(Int64(i), Int64(frameRate)))
+                    let timeSeconds = renderTime.seconds
                     let presentTime = CMTime(value: CMTimeValue(i), timescale: Int32(frameRate))
                     
                     // Throttle
                     try await VideoExporter.awaitReadyForMoreMediaData(input, writer: writer, kind: "video")
                     
-                    let renderTime = Time(seconds: timeSeconds)
-
                     let shouldTraceFrame = (i == 0) || (i == (totalFrames - 1))
                     if shouldTraceFrame {
                         await trace.record(
@@ -510,7 +572,21 @@ public actor VideoExporter: VideoExporting {
                             fields: ["frame": String(i), "t": String(format: "%.6f", timeSeconds)]
                         )
                     }
-                    let request = try await compiler.compile(timeline: timeline, at: renderTime, quality: quality)
+                    let frameContext = frameContextProvider?(timeline, renderTime)
+                    let requestBase = try await compiler.compile(
+                        timeline: timeline,
+                        at: renderTime,
+                        quality: quality,
+                        frameContext: frameContext
+                    )
+                    let request = RenderRequest(
+                        id: requestBase.id,
+                        graph: requestBase.graph,
+                        time: requestBase.time,
+                        quality: requestBase.quality,
+                        assets: requestBase.assets,
+                        renderFPS: Double(frameRate)
+                    )
                     if shouldTraceFrame {
                         await trace.record(
                             "render.compile.end",
@@ -767,5 +843,11 @@ public actor VideoExporter: VideoExporting {
         }
         
         return nil // Mono fallback or error
+    }
+
+    private static func exportWidth(forHeight height: Int) -> Int {
+        // AVFoundation/VT commonly requires even dimensions. Use deterministic 16:9 and force even.
+        let raw = max(2, height * 16 / 9)
+        return (raw % 2 == 0) ? raw : (raw - 1)
     }
 }

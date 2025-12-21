@@ -1,0 +1,3242 @@
+Building for production...
+[0/2] Write swift-version--58304C5D6DBC2206.txt
+[1/3] Write sources
+[3/4] Compiling MetaVisCore ColorLabTools.swift
+[4/7] Compiling MetaVisTimeline Clip.swift
+/Users/kwilliams/Projects/metavis_render_two/MetaVisTimeline/Sources/MetaVisTimeline/CompositeGraphBuilder.swift:21:13: [1;33mwarning: [1;39mvariable 'sourceNodes' was never used; consider replacing with '_' or removing it[0;0m [#no-usage]
+ [0;36m19 |[0;0m         
+ [0;36m20 |[0;0m         // 2. Create Source Nodes for all active clips
+ [0;36m21 |[0;0m         var sourceNodes: [UUID: Node] = [:]
+    [0;36m|[0;0m             `- [1;33mwarning: [1;39mvariable 'sourceNodes' was never used; consider replacing with '_' or removing it[0;0m [#no-usage]
+ [0;36m22 |[0;0m         
+ [0;36m23 |[0;0m         // Group by Track
+[5/8] Compiling MetaVisExport AudioEncoder.swift
+/Users/kwilliams/Projects/metavis_render_two/MetaVisExport/Sources/MetaVisExport/Muxing/Muxer.swift:636:34: [1;33mwarning: [1;39mcapture of 'exportSession' with non-Sendable type 'AVAssetExportSession' in a '@Sendable' closure[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures\SendableClosureCaptures]8;;\]
+[0;36m634 |[0;0m         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+[0;36m635 |[0;0m             let timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+[0;36m636 |[0;0m                 progress?(Double(exportSession.progress))
+    [0;36m|[0;0m                                  `- [1;33mwarning: [1;39mcapture of 'exportSession' with non-Sendable type 'AVAssetExportSession' in a '@Sendable' closure[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures\SendableClosureCaptures]8;;\]
+[0;36m637 |[0;0m             }
+[0;36m638 |[0;0m             
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.1.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetExportSession.h:159:12: [1;39mnote: [1;39mclass 'AVAssetExportSession' does not conform to the 'Sendable' protocol[0;0m
+[0;36m157 |[0;0m NS_SWIFT_NONSENDABLE
+[0;36m158 |[0;0m API_AVAILABLE(macos(10.7), ios(4.0), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+[0;36m159 |[0;0m @interface AVAssetExportSession : NSObject
+    [0;36m|[0;0m            `- [1;39mnote: [1;39mclass 'AVAssetExportSession' does not conform to the 'Sendable' protocol[0;0m
+[0;36m160 |[0;0m {
+[0;36m161 |[0;0m @private
+
+/Users/kwilliams/Projects/metavis_render_two/MetaVisExport/Sources/MetaVisExport/Muxing/Muxer.swift:640:17: [1;33mwarning: [1;39mcapture of 'timer' with non-Sendable type 'Timer' in a '@Sendable' closure[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures\SendableClosureCaptures]8;;\]
+[0;36m638 |[0;0m             
+[0;36m639 |[0;0m             exportSession.exportAsynchronously {
+[0;36m640 |[0;0m                 timer.invalidate()
+    [0;36m|[0;0m                 `- [1;33mwarning: [1;39mcapture of 'timer' with non-Sendable type 'Timer' in a '@Sendable' closure[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures\SendableClosureCaptures]8;;\]
+[0;36m641 |[0;0m                 continuation.resume()
+[0;36m642 |[0;0m             }
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.1.sdk/System/Library/Frameworks/Foundation.framework/Headers/NSTimer.h:10:12: [1;39mnote: [1;39mclass 'Timer' does not conform to the 'Sendable' protocol[0;0m
+ [0;36m8 |[0;0m NS_HEADER_AUDIT_BEGIN(nullability, sendability)
+ [0;36m9 |[0;0m 
+[0;36m10 |[0;0m @interface NSTimer : NSObject
+   [0;36m|[0;0m            `- [1;39mnote: [1;39mclass 'Timer' does not conform to the 'Sendable' protocol[0;0m
+[0;36m11 |[0;0m 
+[0;36m12 |[0;0m + (NSTimer *)timerWithTimeInterval:(NSTimeInterval)ti invocation:(NSInvocation *)invocation repeats:(BOOL)yesOrNo;
+
+/Users/kwilliams/Projects/metavis_render_two/MetaVisExport/Sources/MetaVisExport/Muxing/Muxer.swift:754:34: [1;33mwarning: [1;39mcapture of 'exportSession' with non-Sendable type 'AVAssetExportSession' in a '@Sendable' closure[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures\SendableClosureCaptures]8;;\]
+[0;36m752 |[0;0m         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+[0;36m753 |[0;0m             let timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+[0;36m754 |[0;0m                 progress?(Double(exportSession.progress))
+    [0;36m|[0;0m                                  `- [1;33mwarning: [1;39mcapture of 'exportSession' with non-Sendable type 'AVAssetExportSession' in a '@Sendable' closure[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures\SendableClosureCaptures]8;;\]
+[0;36m755 |[0;0m             }
+[0;36m756 |[0;0m             
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.1.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetExportSession.h:159:12: [1;39mnote: [1;39mclass 'AVAssetExportSession' does not conform to the 'Sendable' protocol[0;0m
+[0;36m157 |[0;0m NS_SWIFT_NONSENDABLE
+[0;36m158 |[0;0m API_AVAILABLE(macos(10.7), ios(4.0), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+[0;36m159 |[0;0m @interface AVAssetExportSession : NSObject
+    [0;36m|[0;0m            `- [1;39mnote: [1;39mclass 'AVAssetExportSession' does not conform to the 'Sendable' protocol[0;0m
+[0;36m160 |[0;0m {
+[0;36m161 |[0;0m @private
+
+/Users/kwilliams/Projects/metavis_render_two/MetaVisExport/Sources/MetaVisExport/Muxing/Muxer.swift:758:17: [1;33mwarning: [1;39mcapture of 'timer' with non-Sendable type 'Timer' in a '@Sendable' closure[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures\SendableClosureCaptures]8;;\]
+[0;36m756 |[0;0m             
+[0;36m757 |[0;0m             exportSession.exportAsynchronously {
+[0;36m758 |[0;0m                 timer.invalidate()
+    [0;36m|[0;0m                 `- [1;33mwarning: [1;39mcapture of 'timer' with non-Sendable type 'Timer' in a '@Sendable' closure[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures\SendableClosureCaptures]8;;\]
+[0;36m759 |[0;0m                 continuation.resume()
+[0;36m760 |[0;0m             }
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.1.sdk/System/Library/Frameworks/Foundation.framework/Headers/NSTimer.h:10:12: [1;39mnote: [1;39mclass 'Timer' does not conform to the 'Sendable' protocol[0;0m
+ [0;36m8 |[0;0m NS_HEADER_AUDIT_BEGIN(nullability, sendability)
+ [0;36m9 |[0;0m 
+[0;36m10 |[0;0m @interface NSTimer : NSObject
+   [0;36m|[0;0m            `- [1;39mnote: [1;39mclass 'Timer' does not conform to the 'Sendable' protocol[0;0m
+[0;36m11 |[0;0m 
+[0;36m12 |[0;0m + (NSTimer *)timerWithTimeInterval:(NSTimeInterval)ti invocation:(NSInvocation *)invocation repeats:(BOOL)yesOrNo;
+
+[#SendableClosureCaptures]: <https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures>
+[6/8] Compiling MetaVisSimulation ColorSpace.swift
+/Users/kwilliams/Projects/metavis_render_two/MetaVisSimulation/Sources/MetaVisSimulation/Engine/SimulationEngine.swift:479:13: [1;33mwarning: [1;39mvariable 'debugTexturesToCheck' was never mutated; consider changing to 'let' constant[0;0m
+ [0;36m477 |[0;0m         // We need a temporary texture cache for intermediate node results
+ [0;36m478 |[0;0m         var nodeTextures: [UUID: MTLTexture] = [:]
+ [0;36m479 |[0;0m         var debugTexturesToCheck: [(MTLTexture, String)] = []
+     [0;36m|[0;0m             `- [1;33mwarning: [1;39mvariable 'debugTexturesToCheck' was never mutated; consider changing to 'let' constant[0;0m
+ [0;36m480 |[0;0m         
+ [0;36m481 |[0;0m         for command in pass.commands {
+
+/Users/kwilliams/Projects/metavis_render_two/MetaVisSimulation/Sources/MetaVisSimulation/Ingestion/MediaProbe.swift:313:19: [1;33mwarning: [1;39mvalue 'formatDesc' was defined but never used; consider replacing with boolean test[0;0m [#no-usage]
+[0;36m311 |[0;0m         
+[0;36m312 |[0;0m         let formatDescriptions = try await track.load(.formatDescriptions)
+[0;36m313 |[0;0m         guard let formatDesc = formatDescriptions.first else { return nil }
+    [0;36m|[0;0m                   `- [1;33mwarning: [1;39mvalue 'formatDesc' was defined but never used; consider replacing with boolean test[0;0m [#no-usage]
+[0;36m314 |[0;0m         
+[0;36m315 |[0;0m         // Try to read the timecode
+
+/Users/kwilliams/Projects/metavis_render_two/MetaVisSimulation/Sources/MetaVisSimulation/Utils/LUTLoader.swift:27:13: [1;33mwarning: [1;39mvariable 'domainMin' was written to, but never read[0;0m
+ [0;36m25 |[0;0m         var size: Int = 0
+ [0;36m26 |[0;0m         var data: [Float] = []
+ [0;36m27 |[0;0m         var domainMin = SIMD3<Float>(0, 0, 0)
+    [0;36m|[0;0m             `- [1;33mwarning: [1;39mvariable 'domainMin' was written to, but never read[0;0m
+ [0;36m28 |[0;0m         var domainMax = SIMD3<Float>(1, 1, 1)
+ [0;36m29 |[0;0m         
+
+/Users/kwilliams/Projects/metavis_render_two/MetaVisSimulation/Sources/MetaVisSimulation/Utils/LUTLoader.swift:28:13: [1;33mwarning: [1;39mvariable 'domainMax' was written to, but never read[0;0m
+ [0;36m26 |[0;0m         var data: [Float] = []
+ [0;36m27 |[0;0m         var domainMin = SIMD3<Float>(0, 0, 0)
+ [0;36m28 |[0;0m         var domainMax = SIMD3<Float>(1, 1, 1)
+    [0;36m|[0;0m             `- [1;33mwarning: [1;39mvariable 'domainMax' was written to, but never read[0;0m
+ [0;36m29 |[0;0m         
+ [0;36m30 |[0;0m         // Parse Header
+
+/Users/kwilliams/Projects/metavis_render_two/MetaVisSimulation/Sources/MetaVisSimulation/Video/VideoFrameProvider.swift:118:13: [1;33mwarning: [1;39mresult of call to 'setupReader(at:)' is unused[0;0m [#no-usage]
+[0;36m116 |[0;0m         if let reader = reader, reader.status == .failed {
+[0;36m117 |[0;0m             // Try to recover
+[0;36m118 |[0;0m             setupReader(at: time)
+    [0;36m|[0;0m             `- [1;33mwarning: [1;39mresult of call to 'setupReader(at:)' is unused[0;0m [#no-usage]
+[0;36m119 |[0;0m         }
+[0;36m120 |[0;0m         
+
+/Users/kwilliams/Projects/metavis_render_two/MetaVisSimulation/Sources/MetaVisSimulation/Video/VideoFrameProvider.swift:160:37: [1;33mwarning: [1;39m'tracks(withMediaType:)' was deprecated in macOS 13.0: Use loadTracks(withMediaType:) instead[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration\DeprecatedDeclaration]8;;\]
+[0;36m158 |[0;0m             reader = try AVAssetReader(asset: asset)
+[0;36m159 |[0;0m             
+[0;36m160 |[0;0m             guard let track = asset.tracks(withMediaType: .video).first else {
+    [0;36m|[0;0m                                     `- [1;33mwarning: [1;39m'tracks(withMediaType:)' was deprecated in macOS 13.0: Use loadTracks(withMediaType:) instead[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration\DeprecatedDeclaration]8;;\]
+[0;36m161 |[0;0m                 return false
+[0;36m162 |[0;0m             }
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[7/9] Compiling Validation main.swift
+[7/9] Write Objects.LinkFileList
+[8/9] Linking Validation
+Build of product 'Validation' complete! (10.99s)
+✨ Starting JWST Composite Generation (via Validation)...
+TextRenderer: Failed to load default library
+⚠️ Failed to load default library from Bundle.module: Error Domain=MTLLibraryErrorDomain Code=6 "no default library was found" UserInfo={NSLocalizedDescription=no default library was found}
+✅ Compiled Simulation Shaders from combined source.
+   ✅ Registered Layer: hlsp_jwst-ero_jwst_miri_carina_f770w_v1_i2d.fits
+   ✅ Registered Layer: hlsp_jwst-ero_jwst_miri_carina_f1130w_v1_i2d.fits
+   ✅ Registered Layer: hlsp_jwst-ero_jwst_miri_carina_f1280w_v1_i2d.fits
+   ✅ Registered Layer: hlsp_jwst-ero_jwst_miri_carina_f1800w_v1_i2d.fits
+   Building Composite Timeline...
+      ZeroCopy: Searching for library...
+      ZeroCopy: Checking Bundle.module: /Users/kwilliams/Projects/metavis_render_two/MetaVisSimulation/.build/arm64-apple-macosx/release/MetaVisExport_MetaVisExport.bundle
+      ZeroCopy: Checking Bundle(for: ZeroCopyConverter): /Users/kwilliams/Projects/metavis_render_two/MetaVisSimulation/.build/arm64-apple-macosx/release
+      ZeroCopy: Checking default library (main bundle)
+      ZeroCopy: Attempting to compile from source...
+      ZeroCopy: Found source at /Users/kwilliams/Projects/metavis_render_two/MetaVisSimulation/.build/arm64-apple-macosx/release/MetaVisExport_MetaVisExport.bundle/ZeroCopy.metal
+      ZeroCopy: ✅ Compiled library from source
+      ZeroCopy: ✅ Pipeline State Created
+   Rendering 150 frames...
+ℹ️ FITS: Skipping HDU (NAXIS=0). HeaderBlocks: 10, DataSize: 0
+✅ FITS: Found Image Extension. Size: 3499x1196, Bitpix: -32
+[CPU] Asset: hlsp_jwst-ero_jwst_miri_carina_f770w_v1_i2d.fits
+  Path: /Users/kwilliams/Projects/metavis_render_two/assets/hlsp_jwst-ero_jwst_miri_carina_f770w_v1_i2d.fits
+  Data Count: 117504000
+  Buffer Address: Optional(0x0000000577c00020)
+  First 5 floats: [0.0, 0.0, 0.0, 0.0, 0.0]
+  Center 5 floats: [0.0, 0.0, 0.0, 0.0, 0.0]
+  Stats:
+    Min: 0.0
+    Max: 2079.978
+    Mean: 71.58472991654446
+    P50: 52.205532
+    P90: 161.32109
+    P99: 297.565
+    P99.9: 430.3268
+    NaNs: 0 / 4184804
+Loaded FITS: 3499x1196 (Offset: 37440)
+Loaded FITS Asset: hlsp_jwst-ero_jwst_miri_carina_f770w_v1_i2d.fits
+ℹ️ FITS: Skipping HDU (NAXIS=0). HeaderBlocks: 10, DataSize: 0
+✅ FITS: Found Image Extension. Size: 3499x1196, Bitpix: -32
+[CPU] Asset: hlsp_jwst-ero_jwst_miri_carina_f1130w_v1_i2d.fits
+  Path: /Users/kwilliams/Projects/metavis_render_two/assets/hlsp_jwst-ero_jwst_miri_carina_f1130w_v1_i2d.fits
+  Data Count: 117504000
+  Buffer Address: Optional(0x0000000578c00020)
+  First 5 floats: [0.0, 0.0, 0.0, 0.0, 0.0]
+  Center 5 floats: [0.0, 0.0, 0.0, 0.0, 0.0]
+  Stats:
+    Min: 0.0
+    Max: 2079.978
+    Mean: 71.58472991654446
+    P50: 52.205532
+    P90: 161.32109
+    P99: 297.565
+    P99.9: 430.3268
+    NaNs: 0 / 4184804
+Loaded FITS: 3499x1196 (Offset: 37440)
+Loaded FITS Asset: hlsp_jwst-ero_jwst_miri_carina_f1130w_v1_i2d.fits
+ℹ️ FITS: Skipping HDU (NAXIS=0). HeaderBlocks: 10, DataSize: 0
+✅ FITS: Found Image Extension. Size: 3499x1196, Bitpix: -32
+[CPU] Asset: hlsp_jwst-ero_jwst_miri_carina_f1280w_v1_i2d.fits
+  Path: /Users/kwilliams/Projects/metavis_render_two/assets/hlsp_jwst-ero_jwst_miri_carina_f1280w_v1_i2d.fits
+  Data Count: 117504000
+  Buffer Address: Optional(0x0000000577c00020)
+  First 5 floats: [0.0, 0.0, 0.0, 0.0, 0.0]
+  Center 5 floats: [0.0, 0.0, 0.0, 0.0, 0.0]
+  Stats:
+    Min: 0.0
+    Max: 3062.1992
+    Mean: 89.2106487094281
+    P50: 78.62611
+    P90: 150.38567
+    P99: 256.38593
+    P99.9: 402.7443
+    NaNs: 0 / 4184804
+Loaded FITS: 3499x1196 (Offset: 37440)
+Loaded FITS Asset: hlsp_jwst-ero_jwst_miri_carina_f1280w_v1_i2d.fits
+ℹ️ FITS: Skipping HDU (NAXIS=0). HeaderBlocks: 10, DataSize: 0
+✅ FITS: Found Image Extension. Size: 3499x1196, Bitpix: -32
+[CPU] Asset: hlsp_jwst-ero_jwst_miri_carina_f1800w_v1_i2d.fits
+  Path: /Users/kwilliams/Projects/metavis_render_two/assets/hlsp_jwst-ero_jwst_miri_carina_f1800w_v1_i2d.fits
+  Data Count: 117504000
+  Buffer Address: Optional(0x0000000578c00020)
+  First 5 floats: [0.0, 0.0, 0.0, 0.0, 0.0]
+  Center 5 floats: [0.0, 0.0, 0.0, 0.0, 0.0]
+  Stats:
+    Min: 0.0
+    Max: 3559.8958
+    Mean: 189.94172170347997
+    P50: 205.86087
+    P90: 249.4682
+    P99: 348.17337
+    P99.9: 584.3166
+    NaNs: 0 / 4184804
+Loaded FITS: 3499x1196 (Offset: 37440)
+Loaded FITS Asset: hlsp_jwst-ero_jwst_miri_carina_f1800w_v1_i2d.fits
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 1E0D03FB-B214-417A-9E08-8965E59DE7F3:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_1E0D03FB-B214-417A-9E08-8965E59DE7F3
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 9B6F6635-DC44-4CCD-AA55-88B93907E2C7:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_9B6F6635-DC44-4CCD-AA55-88B93907E2C7
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 8763D58F-331A-4BC9-8930-C491DBF6DEF4:
+  Pointer: 0x0000000b58805900
+  Label: ProcessOutput_8763D58F-331A-4BC9-8930-C491DBF6DEF4
+  Size: 1920x1080
+  PixelFormat: 115
+   Rendering frame 0/150
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 95D580F6-836C-4167-A114-D8909CC541AE:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_95D580F6-836C-4167-A114-D8909CC541AE
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node A82A9FDA-41B0-464D-BF09-3ADEA8A68BDB:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_A82A9FDA-41B0-464D-BF09-3ADEA8A68BDB
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 0D710ADD-39ED-4EB3-84B3-A26D9351835C:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_0D710ADD-39ED-4EB3-84B3-A26D9351835C
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node FE00280C-96F9-427A-BFEF-9FEA22C106B7:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_FE00280C-96F9-427A-BFEF-9FEA22C106B7
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 5681DB25-C981-403F-943E-6EA477DC1FF8:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_5681DB25-C981-403F-943E-6EA477DC1FF8
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 0E1DAF0E-D7D6-4198-B7B7-3EE37DACCCF6:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_0E1DAF0E-D7D6-4198-B7B7-3EE37DACCCF6
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node E9A49B52-0E08-4F2D-BD76-2B6C34FD35AB:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_E9A49B52-0E08-4F2D-BD76-2B6C34FD35AB
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 5196C17B-7C58-4465-80BA-9F42373545EB:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_5196C17B-7C58-4465-80BA-9F42373545EB
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 5EEC9378-7F5F-426A-A508-59F2A457F5CB:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_5EEC9378-7F5F-426A-A508-59F2A457F5CB
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 77A15F56-E004-4325-A533-32768C2B184E:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_77A15F56-E004-4325-A533-32768C2B184E
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 3348E335-154E-4197-85B1-78DEFDF68773:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_3348E335-154E-4197-85B1-78DEFDF68773
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 60BF5475-2EC9-4764-BA24-238DB221B63E:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_60BF5475-2EC9-4764-BA24-238DB221B63E
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B2534B54-37FD-4184-8FCC-6A26C5FFADE2:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_B2534B54-37FD-4184-8FCC-6A26C5FFADE2
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 6BEDCC8A-EB19-458E-9FA7-38299D8B4351:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_6BEDCC8A-EB19-458E-9FA7-38299D8B4351
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 4464F8E0-2A77-4413-91F2-B89689B0244E:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_4464F8E0-2A77-4413-91F2-B89689B0244E
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 1B878F46-7D29-41F6-B9CE-5925056E055A:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_1B878F46-7D29-41F6-B9CE-5925056E055A
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 9F7EC37A-C793-423A-843A-4705F15A95FD:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_9F7EC37A-C793-423A-843A-4705F15A95FD
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 45197B1F-BCDE-48E7-9F12-0B0245115522:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_45197B1F-BCDE-48E7-9F12-0B0245115522
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 14B83072-7C06-495D-8FBD-29B8671A3273:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_14B83072-7C06-495D-8FBD-29B8671A3273
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node A4788FB2-7880-4B71-8CBC-15A20644F8DD:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_A4788FB2-7880-4B71-8CBC-15A20644F8DD
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node DDE7BEC0-037D-458F-9829-E52E2B5D346A:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_DDE7BEC0-037D-458F-9829-E52E2B5D346A
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 8BBF614B-43C4-4DA2-9107-681CF595DD05:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_8BBF614B-43C4-4DA2-9107-681CF595DD05
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 872824F2-C24D-41C1-B06C-56F83A9CB4E9:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_872824F2-C24D-41C1-B06C-56F83A9CB4E9
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 4F006FC8-346C-4F89-9C2C-E54DD385EC36:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_4F006FC8-346C-4F89-9C2C-E54DD385EC36
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 36428C0F-5D91-45C6-B655-8098C9B75C34:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_36428C0F-5D91-45C6-B655-8098C9B75C34
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 78B23C26-9B3F-4BD4-A150-49DF8A128836:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_78B23C26-9B3F-4BD4-A150-49DF8A128836
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node FEDE873B-E676-4352-B643-363B3D51DC6E:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_FEDE873B-E676-4352-B643-363B3D51DC6E
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node C962EFCD-16CF-45AA-8F61-ED56E49525EF:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_C962EFCD-16CF-45AA-8F61-ED56E49525EF
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 642A6FD1-832C-48CA-A126-5505D0ED47A6:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_642A6FD1-832C-48CA-A126-5505D0ED47A6
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 4F1B033C-F30D-4A7C-BF74-1C0ACC656F6C:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_4F1B033C-F30D-4A7C-BF74-1C0ACC656F6C
+  Size: 1920x1080
+  PixelFormat: 115
+   Rendering frame 10/150
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node C578545C-A250-47EA-8645-3A0D18DDC024:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_C578545C-A250-47EA-8645-3A0D18DDC024
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 0DBA9525-29C9-4EBE-B5E1-3C08D18AE269:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_0DBA9525-29C9-4EBE-B5E1-3C08D18AE269
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node BDE9AE5F-97E7-4394-A187-4E43F7CA258F:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_BDE9AE5F-97E7-4394-A187-4E43F7CA258F
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 5DF6CA07-7E47-4301-B9A8-C9E34BF691DF:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_5DF6CA07-7E47-4301-B9A8-C9E34BF691DF
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 57ABE553-9047-448B-B90A-0120055CF52E:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_57ABE553-9047-448B-B90A-0120055CF52E
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node DBB93CFE-849F-4887-A0F0-3746AAFDADA2:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_DBB93CFE-849F-4887-A0F0-3746AAFDADA2
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B22CBB9F-1575-4562-82BA-3576FF0A5656:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_B22CBB9F-1575-4562-82BA-3576FF0A5656
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 058C9A1F-7D3D-4F0F-8F54-8AB9BC417FAF:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_058C9A1F-7D3D-4F0F-8F54-8AB9BC417FAF
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 47754367-4303-4925-A4E4-02F16F070014:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_47754367-4303-4925-A4E4-02F16F070014
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 12D13674-3803-4508-B187-AD67A2F05F15:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_12D13674-3803-4508-B187-AD67A2F05F15
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 09D17C35-66C3-4DBC-B52E-1B1B2EE6E0CB:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_09D17C35-66C3-4DBC-B52E-1B1B2EE6E0CB
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 2FF8F5D0-C8EE-4877-A90D-59D76FF5809D:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_2FF8F5D0-C8EE-4877-A90D-59D76FF5809D
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 6C6336BB-2685-496B-90B8-CB2D05F0517B:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_6C6336BB-2685-496B-90B8-CB2D05F0517B
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B1694A18-2861-48D9-86C6-02CB41EC32A3:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_B1694A18-2861-48D9-86C6-02CB41EC32A3
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node F4DC8BEF-634F-4998-8C61-449F02D85ED7:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_F4DC8BEF-634F-4998-8C61-449F02D85ED7
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 6EB527CE-3AE0-4FC3-87A0-34124254C6C5:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_6EB527CE-3AE0-4FC3-87A0-34124254C6C5
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 51B431A2-14F3-4D6F-A387-5DF62A175B86:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_51B431A2-14F3-4D6F-A387-5DF62A175B86
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 8A1BBA4A-CE5E-4F12-BCDD-7961A6175BD4:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_8A1BBA4A-CE5E-4F12-BCDD-7961A6175BD4
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node AB296B48-509C-4877-A975-9EE03DCA1B31:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_AB296B48-509C-4877-A975-9EE03DCA1B31
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 12AC66A4-1ACD-4540-A205-D1E111039F46:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_12AC66A4-1ACD-4540-A205-D1E111039F46
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node D2F54C11-9EE1-4D38-9D8F-9AE9BC66903A:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_D2F54C11-9EE1-4D38-9D8F-9AE9BC66903A
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 4E22F6D7-87DE-465D-921C-C8AD26315C90:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_4E22F6D7-87DE-465D-921C-C8AD26315C90
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 7E96D6E2-DA3E-4842-BE8A-BBE1A7DAD260:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_7E96D6E2-DA3E-4842-BE8A-BBE1A7DAD260
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 2518420B-5451-4056-9066-147756291D1F:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_2518420B-5451-4056-9066-147756291D1F
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 1BCBD66A-42A0-4AA1-B3F3-114032C82A17:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_1BCBD66A-42A0-4AA1-B3F3-114032C82A17
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node FFBF5DBF-27D4-4924-95D4-0F6EC2FA52DB:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_FFBF5DBF-27D4-4924-95D4-0F6EC2FA52DB
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 60053B27-966A-4D75-87B4-11D1E53CA3E2:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_60053B27-966A-4D75-87B4-11D1E53CA3E2
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 66F97FA7-99AE-4AE8-B9CE-A0ED92F2AF33:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_66F97FA7-99AE-4AE8-B9CE-A0ED92F2AF33
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node DFA125A0-8BA6-4772-A480-4C07A25DB4F7:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_DFA125A0-8BA6-4772-A480-4C07A25DB4F7
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 9CDE293E-6809-4190-A9DA-F924D7687EAF:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_9CDE293E-6809-4190-A9DA-F924D7687EAF
+  Size: 1920x1080
+  PixelFormat: 115
+   Rendering frame 20/150
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 1003AD44-5A34-4CB1-A0FC-0044465E3FC8:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_1003AD44-5A34-4CB1-A0FC-0044465E3FC8
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 29C4F0A3-F1DC-4A1E-B23A-B33DAA8317C4:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_29C4F0A3-F1DC-4A1E-B23A-B33DAA8317C4
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node C9F5C1F4-37AB-49C6-82B0-CEB318B4E69D:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_C9F5C1F4-37AB-49C6-82B0-CEB318B4E69D
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 170E7241-55F8-4503-9105-36981C37DF77:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_170E7241-55F8-4503-9105-36981C37DF77
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 50EA2617-49D5-4F42-AA0C-81520470CB40:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_50EA2617-49D5-4F42-AA0C-81520470CB40
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 176F4CC3-9276-42FA-A9DC-48116BD19C12:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_176F4CC3-9276-42FA-A9DC-48116BD19C12
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 998AC5B6-152C-4BCD-963A-81109934E843:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_998AC5B6-152C-4BCD-963A-81109934E843
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node D91B2423-DE00-402A-8EDB-C9AA845E0049:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_D91B2423-DE00-402A-8EDB-C9AA845E0049
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node D9EE89AC-2D66-456A-AE34-0592E6D3A95A:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_D9EE89AC-2D66-456A-AE34-0592E6D3A95A
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B2440C67-A885-45F9-8764-2A7EB5C1D48C:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_B2440C67-A885-45F9-8764-2A7EB5C1D48C
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 07F581C3-A8DC-4502-BFE9-C93384B8263E:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_07F581C3-A8DC-4502-BFE9-C93384B8263E
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 70CD3903-DF00-43F0-9F80-D9E2FADF68B5:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_70CD3903-DF00-43F0-9F80-D9E2FADF68B5
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B33B7994-8613-4AA7-A47E-89D598C23A29:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_B33B7994-8613-4AA7-A47E-89D598C23A29
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 4144B754-8939-4EA6-9968-46567490C4C7:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_4144B754-8939-4EA6-9968-46567490C4C7
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B3960DE8-7ABE-4D90-A56B-653094CABDF1:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_B3960DE8-7ABE-4D90-A56B-653094CABDF1
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 1478EA3D-9A84-4C17-9A6D-6611177A3EE6:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_1478EA3D-9A84-4C17-9A6D-6611177A3EE6
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 93F5681B-F865-41F9-A3E7-8C66C1755739:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_93F5681B-F865-41F9-A3E7-8C66C1755739
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node C3945B5C-4027-403F-A743-FA7ADAE852A6:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_C3945B5C-4027-403F-A743-FA7ADAE852A6
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 787025B3-94C8-47EB-BA11-7D060788A8BA:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_787025B3-94C8-47EB-BA11-7D060788A8BA
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 46C9F13B-B876-4290-B5AE-C91AFBC4C7FF:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_46C9F13B-B876-4290-B5AE-C91AFBC4C7FF
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 36C4FED8-41F7-4F12-B166-B323F8C5EAE1:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_36C4FED8-41F7-4F12-B166-B323F8C5EAE1
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node F64FC8EB-5B3E-4C27-825C-308C4C68FB97:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_F64FC8EB-5B3E-4C27-825C-308C4C68FB97
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 940AF758-2ECB-4C22-8A51-154218552322:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_940AF758-2ECB-4C22-8A51-154218552322
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 1DBFF187-9860-49AB-81E7-724BFCCF1441:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_1DBFF187-9860-49AB-81E7-724BFCCF1441
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 150F6AF6-37D0-4E50-BBC2-BAE8BEF38AF7:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_150F6AF6-37D0-4E50-BBC2-BAE8BEF38AF7
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 8F27D2A6-BDBE-484A-AA6B-FAE42F7F3BD1:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_8F27D2A6-BDBE-484A-AA6B-FAE42F7F3BD1
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 4BA89A42-60DD-47B4-A70E-D5E244C0C34F:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_4BA89A42-60DD-47B4-A70E-D5E244C0C34F
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node CB4F7DD2-4C1A-4B5C-AF9F-840C21AD8243:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_CB4F7DD2-4C1A-4B5C-AF9F-840C21AD8243
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 6C499E79-5B45-42DE-BB0E-A0E741FF8490:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_6C499E79-5B45-42DE-BB0E-A0E741FF8490
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 342F9B26-3A84-4CB0-A8E0-3015F79858A9:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_342F9B26-3A84-4CB0-A8E0-3015F79858A9
+  Size: 1920x1080
+  PixelFormat: 115
+   Rendering frame 30/150
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node F9113F5F-7EF2-4EF8-9DD1-FC0AC0584FFE:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_F9113F5F-7EF2-4EF8-9DD1-FC0AC0584FFE
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 5CCCBEB0-D23A-48A9-B918-5312C170AAF5:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_5CCCBEB0-D23A-48A9-B918-5312C170AAF5
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 7C2670C8-39B1-4D4C-B455-F94145E2CDEB:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_7C2670C8-39B1-4D4C-B455-F94145E2CDEB
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node C125765C-69E1-4468-8E44-C989F2FBF41C:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_C125765C-69E1-4468-8E44-C989F2FBF41C
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node C146860D-559D-44B9-A2D8-8B277222091C:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_C146860D-559D-44B9-A2D8-8B277222091C
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node E1A551DC-5F87-4BCC-99BB-FD26B53B11AE:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_E1A551DC-5F87-4BCC-99BB-FD26B53B11AE
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node F1A71D19-C018-43EE-8BDE-C919DEDAEBFC:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_F1A71D19-C018-43EE-8BDE-C919DEDAEBFC
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 2CFB933B-B5A5-4698-8DBA-0DDBC92C6060:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_2CFB933B-B5A5-4698-8DBA-0DDBC92C6060
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 0E4A58A8-EB9C-4082-BBEE-9991967FCE16:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_0E4A58A8-EB9C-4082-BBEE-9991967FCE16
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node BAED64D8-659E-43B2-9F77-63C0F6D5ADD6:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_BAED64D8-659E-43B2-9F77-63C0F6D5ADD6
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B7F9211B-6254-4095-8AEA-D2D4DCCA6F81:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_B7F9211B-6254-4095-8AEA-D2D4DCCA6F81
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node DF9A6C45-2493-4301-BD5D-3842B76F64C6:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_DF9A6C45-2493-4301-BD5D-3842B76F64C6
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node BDFD1B2F-7B37-4D1F-B3BF-A9FE45BBADDC:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_BDFD1B2F-7B37-4D1F-B3BF-A9FE45BBADDC
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node FA316F48-7718-4782-9428-3968ADAFAA14:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_FA316F48-7718-4782-9428-3968ADAFAA14
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 9D5CF37B-2279-4195-A5A1-F5BAEDDE3860:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_9D5CF37B-2279-4195-A5A1-F5BAEDDE3860
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 7F9C76B4-4798-4880-90A8-74992B676B26:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_7F9C76B4-4798-4880-90A8-74992B676B26
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 4D41A054-941D-4A12-B9D4-6064D9329E05:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_4D41A054-941D-4A12-B9D4-6064D9329E05
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node F10B74DD-9520-425A-803F-219CC13965CA:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_F10B74DD-9520-425A-803F-219CC13965CA
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 97D84C10-ECD0-4CA2-8BFE-4BE55A883B3D:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_97D84C10-ECD0-4CA2-8BFE-4BE55A883B3D
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node D5ADE733-747D-4F17-BB16-7BA6F438832E:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_D5ADE733-747D-4F17-BB16-7BA6F438832E
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node D08E4EE1-CBF1-4207-BDEF-37C8B3C131DB:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_D08E4EE1-CBF1-4207-BDEF-37C8B3C131DB
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 61978619-943B-4D42-B6DF-C120ADB6D178:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_61978619-943B-4D42-B6DF-C120ADB6D178
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 27947168-3839-4AA2-AE24-4BF1AE10A75D:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_27947168-3839-4AA2-AE24-4BF1AE10A75D
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B8934BDA-011B-461D-AE56-56A8520CE180:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_B8934BDA-011B-461D-AE56-56A8520CE180
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node A34D9AC5-5C52-41B4-9D57-41569C951412:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_A34D9AC5-5C52-41B4-9D57-41569C951412
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 2066F907-C158-4311-ABD3-88E6E5CE1BE9:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_2066F907-C158-4311-ABD3-88E6E5CE1BE9
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 93FA751F-F0D9-4628-ABE3-0612AB2D945B:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_93FA751F-F0D9-4628-ABE3-0612AB2D945B
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node DED90ABD-FB69-4977-A743-2FB85F330961:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_DED90ABD-FB69-4977-A743-2FB85F330961
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 7D4F6512-962D-4B5B-85D2-773BD2CCFDF8:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_7D4F6512-962D-4B5B-85D2-773BD2CCFDF8
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B1CD3198-A380-4C01-B48E-F79EFA804613:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_B1CD3198-A380-4C01-B48E-F79EFA804613
+  Size: 1920x1080
+  PixelFormat: 115
+   Rendering frame 40/150
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node A802E1F7-164F-48EF-AA07-2B788D84745C:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_A802E1F7-164F-48EF-AA07-2B788D84745C
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 007E7349-24EE-44A7-9587-F2FB7225D3D0:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_007E7349-24EE-44A7-9587-F2FB7225D3D0
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 1E2AAC3D-A9A7-4F63-9E2C-0B602B2EC352:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_1E2AAC3D-A9A7-4F63-9E2C-0B602B2EC352
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 9C553D5C-855E-436E-923B-763F87130D99:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_9C553D5C-855E-436E-923B-763F87130D99
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 11946EC3-8C95-45A2-AC5D-7D7F67B9B230:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_11946EC3-8C95-45A2-AC5D-7D7F67B9B230
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 11C18133-3021-4A16-9FCC-2D3B54D22B90:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_11C18133-3021-4A16-9FCC-2D3B54D22B90
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 7A832109-6E1A-4278-8267-5FEF49806F1A:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_7A832109-6E1A-4278-8267-5FEF49806F1A
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 8404A274-4787-4698-BDF1-963B47FBB49F:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_8404A274-4787-4698-BDF1-963B47FBB49F
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B33B128B-4BC4-48C9-8740-99CBBEEBBBD1:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_B33B128B-4BC4-48C9-8740-99CBBEEBBBD1
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 01102056-3B65-4CA1-9E11-1B86EC61DCE5:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_01102056-3B65-4CA1-9E11-1B86EC61DCE5
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 7B64CD41-BB13-4843-88ED-8009DDC4DA4B:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_7B64CD41-BB13-4843-88ED-8009DDC4DA4B
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 35A283A9-D157-4E18-892F-7D55B484185B:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_35A283A9-D157-4E18-892F-7D55B484185B
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node BA171F29-80AD-4B20-AD69-50C277F34989:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_BA171F29-80AD-4B20-AD69-50C277F34989
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 11407FB6-B6A7-4941-A66C-F46F8E9BC681:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_11407FB6-B6A7-4941-A66C-F46F8E9BC681
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node EAEAEC7E-A4F8-43F2-83F1-7EE54182B1B3:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_EAEAEC7E-A4F8-43F2-83F1-7EE54182B1B3
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 61AFD341-FEFF-4A84-B14C-6D94FCACB6E6:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_61AFD341-FEFF-4A84-B14C-6D94FCACB6E6
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 246C582B-D9E1-4A2C-B57A-F383DD0BF275:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_246C582B-D9E1-4A2C-B57A-F383DD0BF275
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 96E62DEC-7028-4E76-BBB9-099E5C720291:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_96E62DEC-7028-4E76-BBB9-099E5C720291
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 9AD9654B-4FAD-497A-8302-8D39FB284E09:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_9AD9654B-4FAD-497A-8302-8D39FB284E09
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node DE5F04E2-9E79-4898-B378-36AB8E154882:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_DE5F04E2-9E79-4898-B378-36AB8E154882
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 077694CE-539B-47F3-BEAB-C6B23279A07A:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_077694CE-539B-47F3-BEAB-C6B23279A07A
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node E5A2AFF9-7AF7-49C8-88D8-8F8203E55FC2:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_E5A2AFF9-7AF7-49C8-88D8-8F8203E55FC2
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node CF04C32A-5C12-4BC2-8A5C-77417FE434B3:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_CF04C32A-5C12-4BC2-8A5C-77417FE434B3
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 8140DD1F-9509-4F40-B2D5-AC39644E344C:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_8140DD1F-9509-4F40-B2D5-AC39644E344C
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 5CFEE224-E839-4C7C-A6F7-0A084998FB3B:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_5CFEE224-E839-4C7C-A6F7-0A084998FB3B
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node CEF3EA55-3084-4DDE-84FD-1726BD618425:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_CEF3EA55-3084-4DDE-84FD-1726BD618425
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 655DD72B-FB57-4F69-9AD4-ACD2896B7362:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_655DD72B-FB57-4F69-9AD4-ACD2896B7362
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node FA1270E2-7AC3-4128-86F9-073432CF7754:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_FA1270E2-7AC3-4128-86F9-073432CF7754
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node E071D51A-2B7E-41BA-BF09-9B059F0C788A:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_E071D51A-2B7E-41BA-BF09-9B059F0C788A
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 6E16A37C-1E77-4E64-88BF-33F7F60859FD:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_6E16A37C-1E77-4E64-88BF-33F7F60859FD
+  Size: 1920x1080
+  PixelFormat: 115
+   Rendering frame 50/150
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node ACDA21D2-31C2-4D96-AF87-6541D4C0DB5F:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_ACDA21D2-31C2-4D96-AF87-6541D4C0DB5F
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node BA08A78C-B206-4AC8-A4C3-B50569ABC8B6:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_BA08A78C-B206-4AC8-A4C3-B50569ABC8B6
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 104495AD-ED8D-4615-A77F-78C6AC146E26:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_104495AD-ED8D-4615-A77F-78C6AC146E26
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 5AA0E220-0C21-4F48-B230-16BB4579249D:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_5AA0E220-0C21-4F48-B230-16BB4579249D
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node BD5C420F-4D88-4741-96A6-07279D3281B0:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_BD5C420F-4D88-4741-96A6-07279D3281B0
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 8CCA729C-F4F4-4C38-9E45-08C3C2205E93:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_8CCA729C-F4F4-4C38-9E45-08C3C2205E93
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node F9EEE468-A067-4B4C-A4FD-B7E8AD6A081A:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_F9EEE468-A067-4B4C-A4FD-B7E8AD6A081A
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 851DBA42-6360-4165-A14C-01DE6F8A1090:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_851DBA42-6360-4165-A14C-01DE6F8A1090
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node CEEC9D59-0DDD-4B1E-8A04-CFB1AF0755F1:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_CEEC9D59-0DDD-4B1E-8A04-CFB1AF0755F1
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 04A3A4A8-6DF8-434C-91F8-D9FBA7A2CD2B:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_04A3A4A8-6DF8-434C-91F8-D9FBA7A2CD2B
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node ED4D18F1-3FE8-48A0-8418-10A329626DD2:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_ED4D18F1-3FE8-48A0-8418-10A329626DD2
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node A7DC6579-6362-43E5-8E5E-5B89C1290C44:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_A7DC6579-6362-43E5-8E5E-5B89C1290C44
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node C35F334D-0055-4D1B-927F-C6C95231EF97:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_C35F334D-0055-4D1B-927F-C6C95231EF97
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node F1CBDDAF-956D-421F-B348-93F647BA555F:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_F1CBDDAF-956D-421F-B348-93F647BA555F
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 93C23455-9686-4A25-B639-16E50166CBD5:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_93C23455-9686-4A25-B639-16E50166CBD5
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 1A03D44F-2EC3-45E5-9BCC-CAD5279BB72B:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_1A03D44F-2EC3-45E5-9BCC-CAD5279BB72B
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 988DF35B-FFE3-44D9-9AE1-60CF132F70AA:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_988DF35B-FFE3-44D9-9AE1-60CF132F70AA
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 96031961-70B3-4504-96E3-5132E4512382:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_96031961-70B3-4504-96E3-5132E4512382
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node C2FADBBA-05F8-4065-918D-FE22E1F59AF1:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_C2FADBBA-05F8-4065-918D-FE22E1F59AF1
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 9388F543-CA7A-46AA-BD78-D36D4FF9DCE4:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_9388F543-CA7A-46AA-BD78-D36D4FF9DCE4
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 9B150E39-BCEB-41F3-99BA-6F1B2908288E:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_9B150E39-BCEB-41F3-99BA-6F1B2908288E
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node ABD52C15-DE0D-4332-A8C2-4AC74FA4F5EE:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_ABD52C15-DE0D-4332-A8C2-4AC74FA4F5EE
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 2E5A39FB-C11B-448C-96D2-7C9F5DB75350:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_2E5A39FB-C11B-448C-96D2-7C9F5DB75350
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 68BE58EF-4234-4846-B902-A7AB9657C924:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_68BE58EF-4234-4846-B902-A7AB9657C924
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 2F4C5A7C-AF53-46F9-B300-504237C71B7C:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_2F4C5A7C-AF53-46F9-B300-504237C71B7C
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B1DCCDE1-FF9B-4A03-B1AC-99BB547E8B0D:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_B1DCCDE1-FF9B-4A03-B1AC-99BB547E8B0D
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 83F49FCC-B4DD-4AD1-A077-B22121F6900F:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_83F49FCC-B4DD-4AD1-A077-B22121F6900F
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node A2A395E2-9DAB-45BE-8BA4-28A88FC4E6DD:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_A2A395E2-9DAB-45BE-8BA4-28A88FC4E6DD
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node F1713320-E05A-46F1-945A-1D18FFC1E7C2:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_F1713320-E05A-46F1-945A-1D18FFC1E7C2
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 7208DB8C-9F36-4A9A-AF3E-F718ADA68A21:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_7208DB8C-9F36-4A9A-AF3E-F718ADA68A21
+  Size: 1920x1080
+  PixelFormat: 115
+   Rendering frame 60/150
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node EE5FB1BB-BEEC-4142-8250-34F602216BC4:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_EE5FB1BB-BEEC-4142-8250-34F602216BC4
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 629DECFE-B27D-4981-BEC3-DEE8CDCD11F5:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_629DECFE-B27D-4981-BEC3-DEE8CDCD11F5
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 8C538298-35EF-4ECB-AA6E-3D151D2BC12F:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_8C538298-35EF-4ECB-AA6E-3D151D2BC12F
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node D8587DA4-BD73-41B8-A0DB-02E64973A665:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_D8587DA4-BD73-41B8-A0DB-02E64973A665
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 45E55FA9-AF91-46FD-9EE0-B45492AFF23F:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_45E55FA9-AF91-46FD-9EE0-B45492AFF23F
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B2878C5C-BF52-44DE-A83A-AFFF2B0B8105:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_B2878C5C-BF52-44DE-A83A-AFFF2B0B8105
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 6DF745E7-3C41-43BC-A18D-328A85AD72AD:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_6DF745E7-3C41-43BC-A18D-328A85AD72AD
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 5307DF7E-CE48-40D4-8F4E-5ACBBE67EB03:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_5307DF7E-CE48-40D4-8F4E-5ACBBE67EB03
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 19BB7D83-96F9-470C-AADD-8275D20011FF:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_19BB7D83-96F9-470C-AADD-8275D20011FF
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node F6B00F09-65EB-4467-928C-E1269DE31108:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_F6B00F09-65EB-4467-928C-E1269DE31108
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node A3723DBD-4230-4D6D-918D-BA2B982C1194:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_A3723DBD-4230-4D6D-918D-BA2B982C1194
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 3DEE6211-8B79-4D5B-8B7B-467D3D7E2D0D:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_3DEE6211-8B79-4D5B-8B7B-467D3D7E2D0D
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 4EC1AB4F-263E-48BE-8935-24399962802F:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_4EC1AB4F-263E-48BE-8935-24399962802F
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node E4E5B8DC-7CAF-4477-9AFA-F460D921BA92:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_E4E5B8DC-7CAF-4477-9AFA-F460D921BA92
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 64D3D22E-9DFC-4C39-A6B4-CFC86FE4F80B:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_64D3D22E-9DFC-4C39-A6B4-CFC86FE4F80B
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node FA9B8B65-16C7-4351-BD34-FAD5FE090568:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_FA9B8B65-16C7-4351-BD34-FAD5FE090568
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 51215AFD-CE3D-472E-902A-68F3A590F7B8:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_51215AFD-CE3D-472E-902A-68F3A590F7B8
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node C14A2B0F-5847-4080-92CE-9BC523D9BDD7:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_C14A2B0F-5847-4080-92CE-9BC523D9BDD7
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 56942202-BA0F-47A9-A0E2-484F545A9824:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_56942202-BA0F-47A9-A0E2-484F545A9824
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node A19AB2DF-E676-4DDB-B48E-74A9CBDFE4B0:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_A19AB2DF-E676-4DDB-B48E-74A9CBDFE4B0
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 60F967C0-1A54-40BB-B246-E549D17867B3:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_60F967C0-1A54-40BB-B246-E549D17867B3
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node BF8198E8-D68D-444F-B153-A59B05F0FF64:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_BF8198E8-D68D-444F-B153-A59B05F0FF64
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 03AC8A3D-2A18-437D-B134-C7C25AF46AC6:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_03AC8A3D-2A18-437D-B134-C7C25AF46AC6
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node FA682566-BE2A-4B17-8957-BB6F2D1BC126:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_FA682566-BE2A-4B17-8957-BB6F2D1BC126
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node BE9D5277-2300-41BC-8958-2D2F1D850E60:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_BE9D5277-2300-41BC-8958-2D2F1D850E60
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 4C6EC2AA-6547-4696-AA33-BD3B8F0EC1D8:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_4C6EC2AA-6547-4696-AA33-BD3B8F0EC1D8
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node EF7C8C3F-1145-4586-8639-D2E15F70CD55:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_EF7C8C3F-1145-4586-8639-D2E15F70CD55
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node C79C720D-4B24-4C0F-8ECB-48F88A144A25:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_C79C720D-4B24-4C0F-8ECB-48F88A144A25
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 2C6003FA-23DD-4FCB-B754-A9E360960F11:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_2C6003FA-23DD-4FCB-B754-A9E360960F11
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node E9716A03-7904-4136-826F-1D26AEDB2058:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_E9716A03-7904-4136-826F-1D26AEDB2058
+  Size: 1920x1080
+  PixelFormat: 115
+   Rendering frame 70/150
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node ECC199CA-A2E6-40B5-A1AE-FA11517FC946:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_ECC199CA-A2E6-40B5-A1AE-FA11517FC946
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 99854C18-D5DE-4CAB-93E4-07FEAF620B36:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_99854C18-D5DE-4CAB-93E4-07FEAF620B36
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node A56EAA90-86CD-4912-8C76-FA74682FA847:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_A56EAA90-86CD-4912-8C76-FA74682FA847
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 46765708-E944-47C1-90D3-D52106046D5A:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_46765708-E944-47C1-90D3-D52106046D5A
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 381C4E42-C690-42EB-A288-694733E8AB8A:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_381C4E42-C690-42EB-A288-694733E8AB8A
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 57E0F7D0-EC70-4CF8-9B90-57A5D78313E9:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_57E0F7D0-EC70-4CF8-9B90-57A5D78313E9
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node BA5D6147-4146-4340-B029-B5EFA5FF59BD:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_BA5D6147-4146-4340-B029-B5EFA5FF59BD
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 02B0C0D5-1517-4D85-A85E-C524E8C4DA16:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_02B0C0D5-1517-4D85-A85E-C524E8C4DA16
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 1FCC8DC1-09FD-4A2F-8561-744372A30F33:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_1FCC8DC1-09FD-4A2F-8561-744372A30F33
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node D1C7A403-49F8-4304-8C90-AE8AFDDB698F:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_D1C7A403-49F8-4304-8C90-AE8AFDDB698F
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 144C6422-0AA6-4586-9E79-DFA4196CC5E7:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_144C6422-0AA6-4586-9E79-DFA4196CC5E7
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 4C2430FA-FF3E-40C6-8D5E-4AD09D6998F3:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_4C2430FA-FF3E-40C6-8D5E-4AD09D6998F3
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node A66A936F-4030-4AF6-9070-D6E9C2F2634E:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_A66A936F-4030-4AF6-9070-D6E9C2F2634E
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node F0D92D4F-C49D-43A6-984B-2E4361B8656B:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_F0D92D4F-C49D-43A6-984B-2E4361B8656B
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B49E0550-7E72-4B1B-958A-6D89FA73F87B:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_B49E0550-7E72-4B1B-958A-6D89FA73F87B
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 527319B6-3FFD-48D1-881D-146D6AB7E601:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_527319B6-3FFD-48D1-881D-146D6AB7E601
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node D50E60B2-4A7A-4B21-87FA-D0A705CAB55B:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_D50E60B2-4A7A-4B21-87FA-D0A705CAB55B
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 41002158-397D-410E-9C3A-B462B8AA286E:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_41002158-397D-410E-9C3A-B462B8AA286E
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 6CA1B0D4-FC7B-4749-AFD4-21E2218B4D76:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_6CA1B0D4-FC7B-4749-AFD4-21E2218B4D76
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B1566EAD-38B7-4D00-9C25-C12A86145BC9:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_B1566EAD-38B7-4D00-9C25-C12A86145BC9
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 5FB6C65F-440B-455C-8457-6A0B4D720563:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_5FB6C65F-440B-455C-8457-6A0B4D720563
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B98A9FD9-BA4B-4440-BB9F-2A9BD6C477A4:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_B98A9FD9-BA4B-4440-BB9F-2A9BD6C477A4
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 11D41A44-90DB-46BF-90A9-AE3B9AA679A8:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_11D41A44-90DB-46BF-90A9-AE3B9AA679A8
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 23737B32-4D94-4706-BD78-855FC7E61BF6:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_23737B32-4D94-4706-BD78-855FC7E61BF6
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 2A19C289-F653-488D-87CE-C50336166700:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_2A19C289-F653-488D-87CE-C50336166700
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node E2FF39C8-3C51-42E5-B856-993C210BC791:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_E2FF39C8-3C51-42E5-B856-993C210BC791
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node A02BFA22-FE94-4374-B7CD-5B7FDC8B7EA9:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_A02BFA22-FE94-4374-B7CD-5B7FDC8B7EA9
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 6D45BF31-B023-45B5-91DB-D7AF8AB7ABB3:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_6D45BF31-B023-45B5-91DB-D7AF8AB7ABB3
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 945C1E61-A464-4907-BB27-36DB5D11A2AE:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_945C1E61-A464-4907-BB27-36DB5D11A2AE
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node CB505B99-19A3-4CD4-B842-277BBE117CED:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_CB505B99-19A3-4CD4-B842-277BBE117CED
+  Size: 1920x1080
+  PixelFormat: 115
+   Rendering frame 80/150
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 20C5BE78-574C-46D8-B557-C336D5778748:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_20C5BE78-574C-46D8-B557-C336D5778748
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 3C301591-4BF6-437E-BFF5-812E76D7E6EA:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_3C301591-4BF6-437E-BFF5-812E76D7E6EA
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 9626BD25-9512-4C54-8A8D-A9709E9D2BB9:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_9626BD25-9512-4C54-8A8D-A9709E9D2BB9
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 813068BC-C44F-4981-B1FB-D35588AE8181:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_813068BC-C44F-4981-B1FB-D35588AE8181
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 102E1FC8-CBEE-4FB7-9A0C-AFE52E7EE82D:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_102E1FC8-CBEE-4FB7-9A0C-AFE52E7EE82D
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node C1503256-F4F1-423E-B6B2-A92C622D556C:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_C1503256-F4F1-423E-B6B2-A92C622D556C
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 036D81CE-34B3-4F7C-9F6B-C01F1FE8B834:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_036D81CE-34B3-4F7C-9F6B-C01F1FE8B834
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 187E0E58-BDAD-4F90-8F74-3BB894CE8620:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_187E0E58-BDAD-4F90-8F74-3BB894CE8620
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 7801DDDA-756D-4A4F-8D48-B09D69DD436A:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_7801DDDA-756D-4A4F-8D48-B09D69DD436A
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 455F224A-F28F-43CC-8A51-8E3523936FD0:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_455F224A-F28F-43CC-8A51-8E3523936FD0
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 6E653850-3D95-493A-B008-742F3D26BBE0:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_6E653850-3D95-493A-B008-742F3D26BBE0
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 755A5DEB-CDEA-4B88-9D6D-0DCF056F502F:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_755A5DEB-CDEA-4B88-9D6D-0DCF056F502F
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 4A06C77B-63B8-49A5-8921-E0C632FA38B8:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_4A06C77B-63B8-49A5-8921-E0C632FA38B8
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 1C7521D8-9DBC-46ED-A7E1-E9AB50821E67:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_1C7521D8-9DBC-46ED-A7E1-E9AB50821E67
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node EBB00617-9ED0-4894-A336-A5F99247BEA8:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_EBB00617-9ED0-4894-A336-A5F99247BEA8
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node BA37B621-3C82-4B9D-811F-160AFFCA566D:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_BA37B621-3C82-4B9D-811F-160AFFCA566D
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B9696F9B-8C57-4A5E-8D1A-D941B9D8D854:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_B9696F9B-8C57-4A5E-8D1A-D941B9D8D854
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 22204002-3C35-4485-A474-E6FF1D121FC4:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_22204002-3C35-4485-A474-E6FF1D121FC4
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 4F3617FB-CEA0-439E-A40D-A86CC578719C:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_4F3617FB-CEA0-439E-A40D-A86CC578719C
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 2550ABBD-42D2-465E-929D-73CD65305CAB:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_2550ABBD-42D2-465E-929D-73CD65305CAB
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node C2C27E3F-A5A3-4B97-AFCF-A88422CAC90E:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_C2C27E3F-A5A3-4B97-AFCF-A88422CAC90E
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 069CCAEC-5311-461B-91C5-4F67E1BCA356:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_069CCAEC-5311-461B-91C5-4F67E1BCA356
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node BFE7E55F-B2EA-48E2-A59C-679B16302DEF:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_BFE7E55F-B2EA-48E2-A59C-679B16302DEF
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 0D06D5EA-61E4-4EB7-899B-0215F75B35C2:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_0D06D5EA-61E4-4EB7-899B-0215F75B35C2
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node C64369E5-5026-4DC5-A20B-0E482C94EAA6:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_C64369E5-5026-4DC5-A20B-0E482C94EAA6
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 72A1A9B1-3D75-4E11-829A-4A25BA974E82:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_72A1A9B1-3D75-4E11-829A-4A25BA974E82
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node ACE83D5F-7909-4AC8-942D-2B89AEA56C01:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_ACE83D5F-7909-4AC8-942D-2B89AEA56C01
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 2E307474-87BA-4372-9808-0864BE38681D:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_2E307474-87BA-4372-9808-0864BE38681D
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node EEB92A41-267A-42CB-9E91-3851A182ED4E:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_EEB92A41-267A-42CB-9E91-3851A182ED4E
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 8749369D-D8BB-4B3B-A583-B89C44346AA4:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_8749369D-D8BB-4B3B-A583-B89C44346AA4
+  Size: 1920x1080
+  PixelFormat: 115
+   Rendering frame 90/150
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node F8F0F7CD-7D31-4A32-857D-185BE7C8A86C:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_F8F0F7CD-7D31-4A32-857D-185BE7C8A86C
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 4DED9C66-10EA-4CAB-88D9-04F2C047E57F:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_4DED9C66-10EA-4CAB-88D9-04F2C047E57F
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 72ADA824-7F3D-45FF-AA1F-52C336E7C8F9:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_72ADA824-7F3D-45FF-AA1F-52C336E7C8F9
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 35F640EB-364A-4249-B1AE-5DCDA4A4BE5B:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_35F640EB-364A-4249-B1AE-5DCDA4A4BE5B
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 95D02EF0-9023-4085-ADEF-D2598BFB3550:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_95D02EF0-9023-4085-ADEF-D2598BFB3550
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 2AEE8347-736B-4A28-B6C6-9F24142D1DD7:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_2AEE8347-736B-4A28-B6C6-9F24142D1DD7
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 2E19FF7A-56AF-416A-86F7-899493FEE9F7:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_2E19FF7A-56AF-416A-86F7-899493FEE9F7
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node E7EB862D-4B4C-44D0-B368-3C12A9D27EC4:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_E7EB862D-4B4C-44D0-B368-3C12A9D27EC4
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node D150F1F6-9AF0-4DD3-8EAA-E559BF677C61:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_D150F1F6-9AF0-4DD3-8EAA-E559BF677C61
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 408F5909-8BC1-40C8-B9F0-6046A00A8E10:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_408F5909-8BC1-40C8-B9F0-6046A00A8E10
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node A86D5335-62BB-4920-9B67-FA432590F412:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_A86D5335-62BB-4920-9B67-FA432590F412
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node D258939A-6A26-406E-AC93-587E527FE8BE:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_D258939A-6A26-406E-AC93-587E527FE8BE
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 84B5D3D0-E6C1-45F5-92AB-F037C8D2F975:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_84B5D3D0-E6C1-45F5-92AB-F037C8D2F975
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 042FA029-FCB5-4F7A-9971-3D97BFC17AD5:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_042FA029-FCB5-4F7A-9971-3D97BFC17AD5
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node D08E6EA5-E666-4D3F-842E-6D97F47305D2:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_D08E6EA5-E666-4D3F-842E-6D97F47305D2
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 21D2D361-8F90-442E-BA14-961C50AC31D4:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_21D2D361-8F90-442E-BA14-961C50AC31D4
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node D0613106-6800-4DED-ABA9-754C9C3AD431:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_D0613106-6800-4DED-ABA9-754C9C3AD431
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 89492DA0-4074-49DB-8CEC-DA48502A232A:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_89492DA0-4074-49DB-8CEC-DA48502A232A
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 79BE590E-888F-4DC9-A7D3-13F76AFD1155:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_79BE590E-888F-4DC9-A7D3-13F76AFD1155
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node FC90A573-B05C-4C7F-A635-1934E3936A59:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_FC90A573-B05C-4C7F-A635-1934E3936A59
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node C8AFB649-5819-472C-98CF-F422DED26777:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_C8AFB649-5819-472C-98CF-F422DED26777
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node E7AD74A0-667D-408B-B018-9CD24D0C21C3:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_E7AD74A0-667D-408B-B018-9CD24D0C21C3
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 1DC52F6A-47A1-4DB5-9B32-F3C0508A887D:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_1DC52F6A-47A1-4DB5-9B32-F3C0508A887D
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 0D0F7D0E-8C10-44F5-9776-B4FA199346A8:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_0D0F7D0E-8C10-44F5-9776-B4FA199346A8
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 0BE84D8D-6D08-4E83-9A0E-D6BF0EE42D19:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_0BE84D8D-6D08-4E83-9A0E-D6BF0EE42D19
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 8CAB9FE1-DB6C-4B45-B315-C22251C9212D:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_8CAB9FE1-DB6C-4B45-B315-C22251C9212D
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 2C08388F-7DBC-4DF4-B6E7-30724AECFA66:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_2C08388F-7DBC-4DF4-B6E7-30724AECFA66
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 2FE08EE8-4435-4E0D-B8EF-5F8CA5DFD933:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_2FE08EE8-4435-4E0D-B8EF-5F8CA5DFD933
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node E215F5AE-DA6F-473F-A564-F0C04DD407F0:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_E215F5AE-DA6F-473F-A564-F0C04DD407F0
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B890E1E5-1455-4B5A-89B1-9ECE2741B665:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_B890E1E5-1455-4B5A-89B1-9ECE2741B665
+  Size: 1920x1080
+  PixelFormat: 115
+   Rendering frame 100/150
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 81C0AC18-F6D4-4EDE-881B-2D2846504FAE:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_81C0AC18-F6D4-4EDE-881B-2D2846504FAE
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 7823AF55-F20E-4F85-9992-C8AE6B8B3889:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_7823AF55-F20E-4F85-9992-C8AE6B8B3889
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node FE36B8FC-233C-4A10-A8D6-E5DA16D30656:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_FE36B8FC-233C-4A10-A8D6-E5DA16D30656
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 00D4AEB2-E8D7-4E06-874B-34393F327678:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_00D4AEB2-E8D7-4E06-874B-34393F327678
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 3D4F1C97-CEF7-42D4-BAF4-5E818D367BBF:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_3D4F1C97-CEF7-42D4-BAF4-5E818D367BBF
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 6E695476-7E76-42A0-AAE7-9F605F63D055:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_6E695476-7E76-42A0-AAE7-9F605F63D055
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 16BBE4D5-DEA5-4DDC-A1F4-A081B32EBD27:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_16BBE4D5-DEA5-4DDC-A1F4-A081B32EBD27
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node FCEEFB2C-D702-42DB-AF16-4779CAFE3B63:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_FCEEFB2C-D702-42DB-AF16-4779CAFE3B63
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node AEFEB13B-35B9-4831-894E-3D732DA4EC00:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_AEFEB13B-35B9-4831-894E-3D732DA4EC00
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 1063B15E-56F4-4ACC-A3D0-B0886CE61814:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_1063B15E-56F4-4ACC-A3D0-B0886CE61814
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 5B0367C7-8892-45F5-A9F9-8572B50EA0C2:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_5B0367C7-8892-45F5-A9F9-8572B50EA0C2
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node DF5658CA-A5C7-4D84-9310-283EFBEB77DA:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_DF5658CA-A5C7-4D84-9310-283EFBEB77DA
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 94A24D65-2FBD-4C08-BE26-A329856FCFA9:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_94A24D65-2FBD-4C08-BE26-A329856FCFA9
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 8FB87DD8-0955-43C6-B27A-BA1A7F6C3BA4:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_8FB87DD8-0955-43C6-B27A-BA1A7F6C3BA4
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node A5BE70E2-EAB5-421D-BE7B-A3E4AE68333F:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_A5BE70E2-EAB5-421D-BE7B-A3E4AE68333F
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node DBA4992E-332F-4206-A674-D28582C07C00:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_DBA4992E-332F-4206-A674-D28582C07C00
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 70BB3B7F-CD4D-4933-83B9-E9D2EDD7F60C:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_70BB3B7F-CD4D-4933-83B9-E9D2EDD7F60C
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 50A7BAAE-9917-4027-907C-BFE1820304FB:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_50A7BAAE-9917-4027-907C-BFE1820304FB
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 61C3C47D-1E08-4E2D-A338-B3DFBDC34006:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_61C3C47D-1E08-4E2D-A338-B3DFBDC34006
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B8578187-488B-4344-9935-76E09E19AA37:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_B8578187-488B-4344-9935-76E09E19AA37
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 0E198666-3021-4483-962A-B28107351102:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_0E198666-3021-4483-962A-B28107351102
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 850FDB90-8F02-4783-B21E-22505FAD400F:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_850FDB90-8F02-4783-B21E-22505FAD400F
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node E8257592-919A-472C-8CE6-2D7DFBD60D88:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_E8257592-919A-472C-8CE6-2D7DFBD60D88
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 87F74102-0586-4C49-BE9A-20C0F9BB4022:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_87F74102-0586-4C49-BE9A-20C0F9BB4022
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 05E2E7C9-17DC-428C-918D-344C781B8394:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_05E2E7C9-17DC-428C-918D-344C781B8394
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node F697C495-8055-445E-B971-52AB60766E0E:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_F697C495-8055-445E-B971-52AB60766E0E
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 8463D735-7E95-441F-849C-97ADD6B8E985:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_8463D735-7E95-441F-849C-97ADD6B8E985
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B6021956-DC1D-4D58-8B2B-11A6E9DBE99B:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_B6021956-DC1D-4D58-8B2B-11A6E9DBE99B
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node F4E974A9-C495-4ACB-B107-38260C58B5E1:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_F4E974A9-C495-4ACB-B107-38260C58B5E1
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node DF2E5C9E-0715-4116-AA80-82DC945F84CB:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_DF2E5C9E-0715-4116-AA80-82DC945F84CB
+  Size: 1920x1080
+  PixelFormat: 115
+   Rendering frame 110/150
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 431EAA8E-4CD6-4E92-B0E4-838EC0C0D65A:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_431EAA8E-4CD6-4E92-B0E4-838EC0C0D65A
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 31809914-7593-42BB-9911-D76FD376CFA9:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_31809914-7593-42BB-9911-D76FD376CFA9
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 46DE70A0-2933-42CD-AA12-F048768AD4C8:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_46DE70A0-2933-42CD-AA12-F048768AD4C8
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 58E5FFE5-E187-4EB6-BE2B-713B850ABA92:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_58E5FFE5-E187-4EB6-BE2B-713B850ABA92
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 37A7279E-45B9-4944-A24C-F885D682E27F:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_37A7279E-45B9-4944-A24C-F885D682E27F
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node E4D868F9-A97F-4098-AEF5-E09679440B6F:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_E4D868F9-A97F-4098-AEF5-E09679440B6F
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node A32D1231-3D85-451A-BDF2-232AFF710F55:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_A32D1231-3D85-451A-BDF2-232AFF710F55
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 0162536A-59DE-4DE1-93F2-53E8BB06064A:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_0162536A-59DE-4DE1-93F2-53E8BB06064A
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 045EFBFB-6105-42B5-9F17-0EBC88EA2627:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_045EFBFB-6105-42B5-9F17-0EBC88EA2627
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 73F7507A-2854-4C6F-939A-66465868434C:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_73F7507A-2854-4C6F-939A-66465868434C
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 69CA8E91-9725-4402-84FD-D125028946B8:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_69CA8E91-9725-4402-84FD-D125028946B8
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node E6A31A7B-B407-4D90-A62B-8622D9EADDE5:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_E6A31A7B-B407-4D90-A62B-8622D9EADDE5
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node E72078C2-BEDC-40D0-8C83-3DE51CA5B6FE:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_E72078C2-BEDC-40D0-8C83-3DE51CA5B6FE
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 505DBB30-3A56-4CCB-9E68-B15EA3B358B3:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_505DBB30-3A56-4CCB-9E68-B15EA3B358B3
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 49811D18-8EF5-4379-AB52-9AA7A7D4D837:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_49811D18-8EF5-4379-AB52-9AA7A7D4D837
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 4EF13311-8C09-4C15-B169-D5BEA69D40DE:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_4EF13311-8C09-4C15-B169-D5BEA69D40DE
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 6A98B927-DDBB-4698-9487-E71AAD839C96:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_6A98B927-DDBB-4698-9487-E71AAD839C96
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 582E80DA-2B91-4A2D-AD12-5A285D549A30:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_582E80DA-2B91-4A2D-AD12-5A285D549A30
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node A391D77A-2F90-41B9-AE78-F5D480E362E2:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_A391D77A-2F90-41B9-AE78-F5D480E362E2
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 11199C27-5493-450D-BAA7-98AE3BF578F6:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_11199C27-5493-450D-BAA7-98AE3BF578F6
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 4395E965-30E0-4AA3-8EAE-0FFADFF23E8F:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_4395E965-30E0-4AA3-8EAE-0FFADFF23E8F
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node D199E4A6-2DCD-4EDE-B90E-D7E6494624C3:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_D199E4A6-2DCD-4EDE-B90E-D7E6494624C3
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 45198387-E535-4991-955F-82BCAE503F24:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_45198387-E535-4991-955F-82BCAE503F24
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node C6978BE8-75A9-442C-B030-E0C6A52B354B:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_C6978BE8-75A9-442C-B030-E0C6A52B354B
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 308F3228-0AED-49D2-B501-A623F93A3F18:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_308F3228-0AED-49D2-B501-A623F93A3F18
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node D3A82C26-71C3-48E9-87B4-FC1BFAFE3AA4:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_D3A82C26-71C3-48E9-87B4-FC1BFAFE3AA4
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 876A510A-1B50-4D8C-8DB3-132D6DD58B95:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_876A510A-1B50-4D8C-8DB3-132D6DD58B95
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node C4B1A450-494C-43B0-A85F-B4AE1E0641F0:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_C4B1A450-494C-43B0-A85F-B4AE1E0641F0
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 71D28838-D954-4950-8315-F06C671FFAF6:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_71D28838-D954-4950-8315-F06C671FFAF6
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 0DCC1C65-990C-4C23-8FD2-0C2EC4F757AE:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_0DCC1C65-990C-4C23-8FD2-0C2EC4F757AE
+  Size: 1920x1080
+  PixelFormat: 115
+   Rendering frame 120/150
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node AF2EFFDD-AA67-4276-8073-433A59F1A013:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_AF2EFFDD-AA67-4276-8073-433A59F1A013
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 82C41AEE-A869-4DAC-8254-3D687FBDC238:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_82C41AEE-A869-4DAC-8254-3D687FBDC238
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 23B55676-1330-4152-847F-56CC58784324:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_23B55676-1330-4152-847F-56CC58784324
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 94F45733-A7C2-4726-A215-29C532682B0A:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_94F45733-A7C2-4726-A215-29C532682B0A
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 541DF061-5555-47B4-A052-8032B928706A:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_541DF061-5555-47B4-A052-8032B928706A
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 23428A9C-08AF-4128-AD83-2973BF54FD06:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_23428A9C-08AF-4128-AD83-2973BF54FD06
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 3D1D38AC-15EA-4F5B-95B3-78CB05087370:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_3D1D38AC-15EA-4F5B-95B3-78CB05087370
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node A23E7E97-FC7C-4121-90F2-FB15F671236D:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_A23E7E97-FC7C-4121-90F2-FB15F671236D
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 5FF938CC-B225-4E2C-A25B-23BD559DE308:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_5FF938CC-B225-4E2C-A25B-23BD559DE308
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 692A350C-18DE-43E4-9DA3-53CBE01612D4:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_692A350C-18DE-43E4-9DA3-53CBE01612D4
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 3ED5162F-0B4E-410D-B2B6-583FEB291468:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_3ED5162F-0B4E-410D-B2B6-583FEB291468
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node DD9DB811-96A8-4885-9568-1F47F907372E:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_DD9DB811-96A8-4885-9568-1F47F907372E
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 598E3C0F-99A0-4D05-8958-60ED91FEECEF:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_598E3C0F-99A0-4D05-8958-60ED91FEECEF
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node DDC82E5C-39B0-4B79-BF03-6F98E9263F89:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_DDC82E5C-39B0-4B79-BF03-6F98E9263F89
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 0F2F933D-E02A-4627-805E-89A997934372:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_0F2F933D-E02A-4627-805E-89A997934372
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node DC9E4429-8080-43B6-A5E9-F83451E37B8A:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_DC9E4429-8080-43B6-A5E9-F83451E37B8A
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 58A036F3-3A4A-40F4-B62C-511CD9B688BC:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_58A036F3-3A4A-40F4-B62C-511CD9B688BC
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 6CA8C471-EAC6-490B-8838-B0F7B84D430F:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_6CA8C471-EAC6-490B-8838-B0F7B84D430F
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 2CFF70E3-F800-41BF-96F4-046C21C4C6C8:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_2CFF70E3-F800-41BF-96F4-046C21C4C6C8
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 5DE51E86-83B4-40EB-9333-6956956C6F2E:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_5DE51E86-83B4-40EB-9333-6956956C6F2E
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 3569F0AC-44E2-4027-8FDE-1080F53AA14E:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_3569F0AC-44E2-4027-8FDE-1080F53AA14E
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 4E5CD90F-AEA3-49F8-8CED-4CCD43376A79:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_4E5CD90F-AEA3-49F8-8CED-4CCD43376A79
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 21844527-56CE-4E4E-9E24-7D1371F7E51F:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_21844527-56CE-4E4E-9E24-7D1371F7E51F
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 1281FC82-45EA-48EF-89C6-DCD6C9F22DB0:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_1281FC82-45EA-48EF-89C6-DCD6C9F22DB0
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B3DFA525-836E-445E-97AD-2ABBA2E6BE90:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_B3DFA525-836E-445E-97AD-2ABBA2E6BE90
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node D2CCE3D8-D31C-4481-8D84-904C53E9ADF2:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_D2CCE3D8-D31C-4481-8D84-904C53E9ADF2
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 23E7AE70-F9B5-498F-AFC1-BE2D720EE536:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_23E7AE70-F9B5-498F-AFC1-BE2D720EE536
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 763AEF6B-A67E-4915-800F-88BE02286881:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_763AEF6B-A67E-4915-800F-88BE02286881
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 1B419451-F6C5-426D-90BE-2EFFD65C0AA5:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_1B419451-F6C5-426D-90BE-2EFFD65C0AA5
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node C6C0308A-22C0-49FE-8920-33E4DFF9A81A:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_C6C0308A-22C0-49FE-8920-33E4DFF9A81A
+  Size: 1920x1080
+  PixelFormat: 115
+   Rendering frame 130/150
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B386C0AC-D863-4D9A-9CBC-9BA9C85289EA:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_B386C0AC-D863-4D9A-9CBC-9BA9C85289EA
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B8909E5D-4B1F-44DD-92A1-ADDAF68F3A38:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_B8909E5D-4B1F-44DD-92A1-ADDAF68F3A38
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 0CF533B9-5933-4C94-A371-92532753A9FB:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_0CF533B9-5933-4C94-A371-92532753A9FB
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 99CE6E83-7200-483D-AAB5-AEB1E2E7DF32:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_99CE6E83-7200-483D-AAB5-AEB1E2E7DF32
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node DEBA579E-B89B-4E58-BD96-0D85203A79CC:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_DEBA579E-B89B-4E58-BD96-0D85203A79CC
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 70A27A3D-1BC9-47E7-B7C8-EED641B4473E:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_70A27A3D-1BC9-47E7-B7C8-EED641B4473E
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node EC47F56D-3A0A-49A0-A0F1-01971043681D:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_EC47F56D-3A0A-49A0-A0F1-01971043681D
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 2F1FF719-5283-4795-BBB3-502C7E85B924:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_2F1FF719-5283-4795-BBB3-502C7E85B924
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 137BDEF5-4EC7-44F7-8B72-28A5D213B08B:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_137BDEF5-4EC7-44F7-8B72-28A5D213B08B
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 7D77B8EC-8C39-468B-8910-820CC5867114:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_7D77B8EC-8C39-468B-8910-820CC5867114
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 916BC12E-CD73-4E72-B208-929E317817A8:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_916BC12E-CD73-4E72-B208-929E317817A8
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 80FFB945-45C4-496F-9939-8B3B7480D974:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_80FFB945-45C4-496F-9939-8B3B7480D974
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 83A5DF79-FDF6-4F2F-B6F7-4A8B40BB26EC:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_83A5DF79-FDF6-4F2F-B6F7-4A8B40BB26EC
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node A737EBA5-DC54-414F-880B-3F39925FC91B:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_A737EBA5-DC54-414F-880B-3F39925FC91B
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node E1B434CD-EBA9-43E7-8C1C-CB7750D430EE:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_E1B434CD-EBA9-43E7-8C1C-CB7750D430EE
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node CFB289E3-DC4E-4B75-AD7A-78373CB77211:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_CFB289E3-DC4E-4B75-AD7A-78373CB77211
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 61CE4FEB-8868-4BF0-A1CB-6E1522818B73:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_61CE4FEB-8868-4BF0-A1CB-6E1522818B73
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node C4E5D62B-C517-40FD-9495-95709D9A9EDA:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_C4E5D62B-C517-40FD-9495-95709D9A9EDA
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 82BE96A1-D317-488A-987B-DDE847FA63BF:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_82BE96A1-D317-488A-987B-DDE847FA63BF
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 1E6FDD47-4608-4DA5-A761-0DFD31BEB66C:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_1E6FDD47-4608-4DA5-A761-0DFD31BEB66C
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 2D2D8285-7F70-4E72-B4D9-78EF54711B0A:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_2D2D8285-7F70-4E72-B4D9-78EF54711B0A
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 30FD6AFB-AA6B-4D6B-AE20-FB8D3EADC75F:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_30FD6AFB-AA6B-4D6B-AE20-FB8D3EADC75F
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 6B0EAEB3-73B0-4035-B67E-EA9496687B3E:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_6B0EAEB3-73B0-4035-B67E-EA9496687B3E
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node BACE6910-EEF3-4C52-9634-9EC2A3C981C5:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_BACE6910-EEF3-4C52-9634-9EC2A3C981C5
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 1E5752BC-EF71-41FF-BFA2-A172F8DC83AD:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_1E5752BC-EF71-41FF-BFA2-A172F8DC83AD
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 1DBC83A9-351A-425C-BED3-BB276F2C67A8:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_1DBC83A9-351A-425C-BED3-BB276F2C67A8
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node D75691D7-9B6A-441D-BF38-FA452DCA373C:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_D75691D7-9B6A-441D-BF38-FA452DCA373C
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node C274FF63-D445-4A25-B69C-477D2D7A0E63:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_C274FF63-D445-4A25-B69C-477D2D7A0E63
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 5F5F6AC8-1DB2-409B-961A-6CB34F03F3CD:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_5F5F6AC8-1DB2-409B-961A-6CB34F03F3CD
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 60990C66-F8B7-45A4-8CBC-4839C4B5E245:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_60990C66-F8B7-45A4-8CBC-4839C4B5E245
+  Size: 1920x1080
+  PixelFormat: 115
+   Rendering frame 140/150
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 76D38C49-03B5-427F-A7FA-69D4B31FCBB6:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_76D38C49-03B5-427F-A7FA-69D4B31FCBB6
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B96995A1-0A40-44AF-9156-B5B4FAAFBB96:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_B96995A1-0A40-44AF-9156-B5B4FAAFBB96
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node B8A7FB68-9263-4F9D-B557-A73110D2D7D8:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_B8A7FB68-9263-4F9D-B557-A73110D2D7D8
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node FC03D400-98DF-4911-8757-68148CE52E3A:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_FC03D400-98DF-4911-8757-68148CE52E3A
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 367FF54A-D321-4D15-B792-1602351C3473:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_367FF54A-D321-4D15-B792-1602351C3473
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 6EC941C9-BA88-49D0-B5CE-F26D32A19067:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_6EC941C9-BA88-49D0-B5CE-F26D32A19067
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node FDED5476-BFB6-48CB-BB54-8C66C1C41262:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_FDED5476-BFB6-48CB-BB54-8C66C1C41262
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 70089FAA-E0AC-4DE4-B611-8118397A3314:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_70089FAA-E0AC-4DE4-B611-8118397A3314
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 2DC6B891-3AB1-48C2-ACDE-E4131817BE11:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_2DC6B891-3AB1-48C2-ACDE-E4131817BE11
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node CE9BAB51-FC4F-4AE3-AC06-3EE17F370961:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_CE9BAB51-FC4F-4AE3-AC06-3EE17F370961
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 8CA09691-F35D-4C57-A63B-259E625DDDFC:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_8CA09691-F35D-4C57-A63B-259E625DDDFC
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 86AD57CE-113B-468C-9097-91D452CA9359:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_86AD57CE-113B-468C-9097-91D452CA9359
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 4FB5BFEA-811F-4FE2-A692-7BD65FB70002:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_4FB5BFEA-811F-4FE2-A692-7BD65FB70002
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 826BA19C-ED6E-4CD0-8938-F6980006CDC6:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_826BA19C-ED6E-4CD0-8938-F6980006CDC6
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 04B4EB2C-DFFE-4F22-AC99-99E9C9FC2A90:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_04B4EB2C-DFFE-4F22-AC99-99E9C9FC2A90
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node E930CC60-97BF-490D-BA02-47C97F5A70E6:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_E930CC60-97BF-490D-BA02-47C97F5A70E6
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 714CDC00-204E-4EE5-B106-0705E60DDB90:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_714CDC00-204E-4EE5-B106-0705E60DDB90
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 4A8B785B-29D3-4AFF-9571-6CF41EE17069:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_4A8B785B-29D3-4AFF-9571-6CF41EE17069
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 11139D2F-2CBE-46DE-8E93-86ADE8D046FB:
+  Pointer: 0x0000000b58805e00
+  Label: ProcessOutput_11139D2F-2CBE-46DE-8E93-86ADE8D046FB
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 01B0F30B-9C46-4EB5-9480-6B14966232AA:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_01B0F30B-9C46-4EB5-9480-6B14966232AA
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 3B90AA94-F1F9-458D-8D0C-C668E59335E5:
+  Pointer: 0x0000000b58805400
+  Label: ProcessOutput_3B90AA94-F1F9-458D-8D0C-C668E59335E5
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 23B77EC0-2B5F-4669-87B2-71917B6A1C1C:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_23B77EC0-2B5F-4669-87B2-71917B6A1C1C
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 2F61DE3F-3FFD-48B0-96A5-329CC2EFD3C7:
+  Pointer: 0x0000000b58805180
+  Label: ProcessOutput_2F61DE3F-3FFD-48B0-96A5-329CC2EFD3C7
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node EBB49047-288A-4EC0-AA19-E36B156145BA:
+  Pointer: 0x0000000b58804f00
+  Label: ProcessOutput_EBB49047-288A-4EC0-AA19-E36B156145BA
+  Size: 1920x1080
+  PixelFormat: 115
+[Validation] Using output texture:
+  Pointer: 0x0000000b58804780
+  Label: ValidationOutputTexture
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 72C33B6C-0029-42DE-9886-4D53660270CD:
+  Pointer: 0x0000000b58806080
+  Label: ProcessOutput_72C33B6C-0029-42DE-9886-4D53660270CD
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node ED320D70-38A9-4E54-AD8D-75AE2B88F598:
+  Pointer: 0x0000000b58806300
+  Label: ProcessOutput_ED320D70-38A9-4E54-AD8D-75AE2B88F598
+  Size: 1920x1080
+  PixelFormat: 115
+[Composite] Using output texture for Node 7C5AFCE5-CEFF-456E-8712-51B76F5BDB22:
+  Pointer: 0x0000000b58804a00
+  Label: ProcessOutput_7C5AFCE5-CEFF-456E-8712-51B76F5BDB22
+  Size: 1920x1080
+  PixelFormat: 115
+✅ Composite Generation Complete: /Users/kwilliams/Projects/metavis_render_two/MetaVisSimulation/renders/jwst_composite.mov

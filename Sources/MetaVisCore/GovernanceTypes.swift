@@ -10,6 +10,24 @@ public enum ProjectType: String, Codable, Sendable, CaseIterable {
     case commercial     // Enterprise features
 }
 
+public extension ProjectType {
+    /// Default project recipe ID for this project type.
+    ///
+    /// Note: This is intentionally a string mapping (no module dependency on MetaVisSession).
+    var defaultRecipeID: String {
+        switch self {
+        case .basic:
+            return "com.metavis.recipe.smoke_test_2s"
+        case .cinema:
+            return "com.metavis.recipe.god_test_20s"
+        case .lab:
+            return "com.metavis.recipe.god_test_20s"
+        case .commercial:
+            return "com.metavis.recipe.god_test_20s"
+        }
+    }
+}
+
 /// Defines the capabilities of a User Account.
 public struct UserPlan: Codable, Sendable, Equatable {
     public let name: String

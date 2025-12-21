@@ -71,7 +71,7 @@ let package = Package(
         // Depends on Graphics (Shaders) and Core.
         .target(
             name: "MetaVisSimulation",
-            dependencies: ["MetaVisCore", "MetaVisGraphics", "MetaVisTimeline"]
+            dependencies: ["MetaVisCore", "MetaVisGraphics", "MetaVisTimeline", "MetaVisIngest", "MetaVisPerception"]
         ),
         .testTarget(name: "MetaVisSimulationTests", dependencies: ["MetaVisSimulation", "MetaVisPerception", "MetaVisSession"]),
 
@@ -95,7 +95,7 @@ let package = Package(
         // Depends on Core.
         .target(
             name: "MetaVisServices",
-            dependencies: ["MetaVisCore"]
+            dependencies: ["MetaVisCore", "MetaVisTimeline", "MetaVisPerception"]
         ),
         .testTarget(name: "MetaVisServicesTests", dependencies: ["MetaVisServices"]),
 
@@ -167,6 +167,15 @@ let package = Package(
                 "MetaVisExport",
                 "MetaVisQC",
                 "MetaVisPerception"
+            ]
+        ),
+
+        .testTarget(
+            name: "MetaVisLabTests",
+            dependencies: [
+                "MetaVisLab",
+                "MetaVisPerception",
+                "MetaVisCore"
             ]
         ),
     ]

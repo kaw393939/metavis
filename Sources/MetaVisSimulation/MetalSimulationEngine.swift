@@ -3,6 +3,7 @@ import Metal
 import CoreVideo
 import MetaVisCore
 import MetaVisGraphics // For Bundle access (if public) or Resource lookup
+import MetaVisPerception
 import simd
 
 /// The Production Renderer. executes the RenderRequest on the GPU.
@@ -17,6 +18,9 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
     private let clipReader: ClipReader
     private let texturePool: TexturePool
     private var isConfigured: Bool = false
+
+    private let maskDevice: MaskDevice
+    private let maskTextureCache: CVMetalTextureCache?
 
     private var renderWarnings: [String] = []
 
@@ -91,6 +95,15 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
 
         self.clipReader = ClipReader(device: device)
         self.texturePool = TexturePool(device: device)
+
+        self.maskDevice = MaskDevice()
+        var cache: CVMetalTextureCache?
+        let status = CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache)
+        if status == kCVReturnSuccess {
+            self.maskTextureCache = cache
+        } else {
+            self.maskTextureCache = nil
+        }
     }
     
     public func configure() async throws {
@@ -116,7 +129,12 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
                           "ClearColor",        // Solid fills (empty timeline fallback)
                     "ColorSpace",         // IDT/ODT transforms
                           "ACES",               // Shared ACES helpers (ToneMapping/Grading)
+                      "Procedural",         // Shared procedural helpers (volumetric nebula)
                     "Noise",              // Shared noise helpers (used by blur/bokeh)
+                    "FaceEnhance",        // fx_face_enhance / fx_beauty_enhance
+                      "FaceMaskGenerator",  // fx_generate_face_mask
+                                        "MaskSources",        // source_person_mask
+                                        "MaskedColorGrade",   // fx_masked_grade
                     "FormatConversion",   // RGBA→BGRA swizzle
                     "Compositor",         // Multi-clip alpha blending
                     "Blur",               // fx_blur_h / fx_blur_v
@@ -125,20 +143,38 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
                     "Macbeth",            // Procedural color chart
                     "SMPTE",              // Procedural bars
                     "ZonePlate",          // Procedural zone plate
+                      "DepthOne",           // Deterministic depth=1 generator (nebula debug)
+                      "StarField",          // Deterministic star field generator (nebula debug)
+                      "VolumetricNebula",   // Volumetric nebula raymarcher + composite
                     "Watermark"           // Export watermark overlays
                  ])
             }
         }
 
-        // If we loaded a library but it's missing core kernels, fall back to runtime compilation.
+        // If we loaded a library but it's missing kernels we rely on in core flows, fall back to runtime compilation.
+        // (This keeps AutoEnhance/Beauty from silently producing black frames when the packaged metallib is incomplete.)
         if let lib = self.library,
-           (lib.makeFunction(name: "fx_blur_h") == nil || lib.makeFunction(name: "fx_blur_v") == nil || lib.makeFunction(name: "clear_color") == nil) {
-            logDebug("⚠️ Bundled library missing core kernels; recompiling from sources")
+           (lib.makeFunction(name: "fx_blur_h") == nil
+            || lib.makeFunction(name: "fx_blur_v") == nil
+            || lib.makeFunction(name: "clear_color") == nil
+            || lib.makeFunction(name: "fx_beauty_enhance") == nil
+            || lib.makeFunction(name: "fx_face_enhance") == nil
+            || lib.makeFunction(name: "fx_generate_face_mask") == nil
+            || lib.makeFunction(name: "fx_masked_grade") == nil
+            || lib.makeFunction(name: "source_person_mask") == nil
+            || lib.makeFunction(name: "fx_volumetric_nebula") == nil
+            || lib.makeFunction(name: "fx_volumetric_composite") == nil) {
+            logDebug("⚠️ Bundled library missing required kernels; recompiling from sources")
             self.library = try await compileLibraryFromHardcodedSources(files: [
                 "ClearColor",
                 "ColorSpace",
                 "ACES",
+                "Procedural",
                 "Noise",
+                "FaceEnhance",
+                "FaceMaskGenerator",
+                "MaskSources",
+                "MaskedColorGrade",
                 "FormatConversion",
                 "Compositor",
                 "Blur",
@@ -147,6 +183,9 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
                 "Macbeth",
                 "SMPTE",
                 "ZonePlate",
+                "DepthOne",
+                "StarField",
+                "VolumetricNebula",
                 "Watermark"
             ])
         }
@@ -161,20 +200,30 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
         try await cachePipeline(name: "odt_acescg_to_rec709")
         try await cachePipeline(name: "fx_generate_face_mask") // Vision Mask Gen parameters
         try await cachePipeline(name: "fx_masked_grade")
+        try await cachePipeline(name: "source_person_mask")
         
         // Compositor shaders for multi-clip transitions
         try await cachePipeline(name: "compositor_alpha_blend")
         try await cachePipeline(name: "compositor_crossfade")
+        try await cachePipeline(name: "compositor_dip")
+        try await cachePipeline(name: "compositor_wipe")
         try await cachePipeline(name: "compositor_multi_layer")
         
         // Cache Feature Shaders (if library available)
         // Ideally we iterate Manifests, but vertical slice is manual.
         try await cachePipeline(name: "fx_face_enhance")
+        try await cachePipeline(name: "fx_beauty_enhance")
         
         // LIGM Shaders
         try await cachePipeline(name: "fx_macbeth")
         try await cachePipeline(name: "fx_zone_plate")
         try await cachePipeline(name: "fx_smpte_bars")
+
+        // Volumetric nebula
+        try await cachePipeline(name: "depth_one")
+        try await cachePipeline(name: "fx_starfield")
+        try await cachePipeline(name: "fx_volumetric_nebula")
+        try await cachePipeline(name: "fx_volumetric_composite")
 
         // Blur (Sprint 04 multi-pass)
         try await cachePipeline(name: "fx_blur_h")
@@ -263,8 +312,18 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
     
     /// Renders directly into a CVPixelBuffer (for export).
     public func render(request: RenderRequest, to cvPixelBuffer: CVPixelBuffer, watermark: WatermarkSpec? = nil) async throws {
-        guard let rootTex = try await internalRender(request: request) else {
+        let dstW = CVPixelBufferGetWidth(cvPixelBuffer)
+        let dstH = CVPixelBufferGetHeight(cvPixelBuffer)
+
+        guard let rootTex = try await internalRender(request: request, overrideWidth: dstW, overrideHeight: dstH) else {
             throw RuntimeError("Failed to render frame.")
+        }
+
+        // Defensive guard: if we ever regress and render at a different size than the destination buffer,
+        // fail loudly rather than silently producing partially black frames.
+        if rootTex.width != dstW || rootTex.height != dstH {
+            texturePool.checkin(rootTex)
+            throw RuntimeError("Render size mismatch: rootTex=\(rootTex.width)x\(rootTex.height) dst=\(dstW)x\(dstH)")
         }
         
         // Simple Blit (assuming compatible format or simple copy)
@@ -279,8 +338,8 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
         }
         
         // 2. Wrap CVPixelBuffer in Metal Texture
-        let width = CVPixelBufferGetWidth(cvPixelBuffer)
-        let height = CVPixelBufferGetHeight(cvPixelBuffer)
+        let width = dstW
+        let height = dstH
         let pixelFormat = CVPixelBufferGetPixelFormatType(cvPixelBuffer)
 
         let metalPixelFormat: MTLPixelFormat
@@ -396,7 +455,11 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
         encoder.endEncoding()
     }
     
-    private func internalRender(request: RenderRequest) async throws -> MTLTexture? {
+    private func internalRender(
+        request: RenderRequest,
+        overrideWidth: Int? = nil,
+        overrideHeight: Int? = nil
+    ) async throws -> MTLTexture? {
         if !isConfigured {
             try await configure()
         }
@@ -457,19 +520,28 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
             reusableByKey[reuseKey(for: tex), default: []].append(tex)
         }
         
-        let height = request.quality.resolutionHeight
+        let height: Int
         let width: Int
-        switch request.quality.fidelity {
-        case .draft:
-            // Verification tests assume a fixed 256px width.
-            width = 256
-        case .high, .master:
-            width = height * 16 / 9
+        if let overrideWidth, let overrideHeight {
+            width = overrideWidth
+            height = overrideHeight
+        } else {
+            height = request.quality.resolutionHeight
+            switch request.quality.fidelity {
+            case .draft:
+                // Verification tests assume a fixed 256px width.
+                width = 256
+            case .high, .master:
+                width = height * 16 / 9
+            }
         }
         
         for node in request.graph.nodes {
             if node.shader == "source_texture" {
                 try await prepareSourceTexture(for: node, request: request, width: width, height: height, textureMap: &textureMap)
+            }
+            if node.shader == "source_person_mask" {
+                try await preparePersonMaskTexture(for: node, request: request, width: width, height: height, textureMap: &textureMap)
             }
 
             try encodeNode(
@@ -549,8 +621,19 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
         }
         guard let assetURL = url else { return }
 
+        let fallbackFPS: Double = {
+            if let fps = request.renderFPS, fps.isFinite, fps > 0 { return fps }
+            return 24.0
+        }()
+
         do {
-            let tex = try await clipReader.texture(assetURL: assetURL, timeSeconds: timeSeconds, width: width, height: height)
+            let tex = try await clipReader.texture(
+                assetURL: assetURL,
+                timeSeconds: timeSeconds,
+                width: width,
+                height: height,
+                fallbackFPS: fallbackFPS
+            )
             textureMap[node.id] = tex
 
             if abs(timeSeconds) < 0.0000005 {
@@ -572,14 +655,130 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
                 }
             }
 
-            // Opportunistic lookahead (assume ~24fps if unknown).
-            clipReader.prefetch(assetURL: assetURL, timeSeconds: timeSeconds + (1.0 / 24.0), width: width, height: height)
+            // Opportunistic lookahead (use render cadence when available).
+            let step = 1.0 / fallbackFPS
+            clipReader.prefetch(
+                assetURL: assetURL,
+                timeSeconds: timeSeconds + (step.isFinite && step > 0 ? step : (1.0 / 24.0)),
+                width: width,
+                height: height,
+                fallbackFPS: fallbackFPS
+            )
         } catch {
             let msg = "source_texture decode failed for \(assetURL.lastPathComponent) @ \(String(format: "%.3f", timeSeconds))s: \(error)"
             renderWarnings.append(msg)
             logDebug("❌ \(msg)")
             // If decode fails, keep a deterministic black input.
             let blackDesc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: width, height: height, mipmapped: false)
+            blackDesc.usage = [.shaderRead]
+            blackDesc.storageMode = .shared
+            if let black = device.makeTexture(descriptor: blackDesc) {
+                textureMap[node.id] = black
+            }
+        }
+    }
+
+    private func preparePersonMaskTexture(
+        for node: RenderNode,
+        request: RenderRequest,
+        width: Int,
+        height: Int,
+        textureMap: inout [UUID: MTLTexture]
+    ) async throws {
+        guard let assetIDValue = node.parameters["asset_id"],
+              case .string(let assetID) = assetIDValue else {
+            return
+        }
+
+        let timeSeconds: Double
+        if let t = node.parameters["time_seconds"], case .float(let s) = t {
+            timeSeconds = s
+        } else {
+            timeSeconds = request.time.seconds
+        }
+
+        let resolved = request.assets[assetID] ?? assetID
+        let url: URL?
+        if let u = URL(string: resolved), u.scheme != nil {
+            url = u
+        } else {
+            url = URL(fileURLWithPath: resolved)
+        }
+        guard let assetURL = url else { return }
+
+        let fallbackFPS: Double = {
+            if let fps = request.renderFPS, fps.isFinite, fps > 0 { return fps }
+            return 24.0
+        }()
+
+        let kind: MaskDevice.Kind = {
+            if let v = node.parameters["kind"], case .string(let s) = v {
+                if s.lowercased() == "person" { return .person }
+            }
+            return .foreground
+        }()
+
+        do {
+            let framePB = try await clipReader.pixelBuffer(
+                assetURL: assetURL,
+                timeSeconds: timeSeconds,
+                width: width,
+                height: height,
+                fallbackFPS: fallbackFPS
+            )
+            let maskPB = try await maskDevice.generateMask(in: framePB, kind: kind)
+
+            if let cache = maskTextureCache {
+                var cvMetalTexture: CVMetalTexture?
+                let createResult = CVMetalTextureCacheCreateTextureFromImage(
+                    kCFAllocatorDefault,
+                    cache,
+                    maskPB,
+                    nil,
+                    .r8Unorm,
+                    width,
+                    height,
+                    0,
+                    &cvMetalTexture
+                )
+
+                if createResult == kCVReturnSuccess,
+                   let cvTex = cvMetalTexture,
+                   let tex = CVMetalTextureGetTexture(cvTex) {
+                    textureMap[node.id] = tex
+                    return
+                }
+            }
+
+            // Fallback: manual upload to an r8Unorm texture.
+            let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r8Unorm, width: width, height: height, mipmapped: false)
+            desc.usage = [.shaderRead]
+            desc.storageMode = .shared
+            guard let tex = device.makeTexture(descriptor: desc) else {
+                throw RuntimeError("Failed to allocate mask texture")
+            }
+
+            CVPixelBufferLockBaseAddress(maskPB, .readOnly)
+            defer { CVPixelBufferUnlockBaseAddress(maskPB, .readOnly) }
+
+            guard let base = CVPixelBufferGetBaseAddress(maskPB) else {
+                throw RuntimeError("Mask pixel buffer has no baseAddress")
+            }
+            let bytesPerRow = CVPixelBufferGetBytesPerRow(maskPB)
+            tex.replace(
+                region: MTLRegionMake2D(0, 0, width, height),
+                mipmapLevel: 0,
+                withBytes: base,
+                bytesPerRow: bytesPerRow
+            )
+            textureMap[node.id] = tex
+        } catch {
+            let msg = "source_person_mask failed for \(assetURL.lastPathComponent) @ \(String(format: "%.3f", timeSeconds))s: \(error)"
+            renderWarnings.append(msg)
+            logDebug("❌ \(msg)")
+
+            // Deterministic black mask.
+            let blackDesc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r8Unorm, width: width, height: height, mipmapped: false)
             blackDesc.usage = [.shaderRead]
             blackDesc.storageMode = .shared
             if let black = device.makeTexture(descriptor: blackDesc) {
@@ -673,7 +872,7 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
         
         // A. Bind Inputs
         // Convention: Texture Index 0 is Source, unless shader requires multiple inputs.
-        if node.shader == "compositor_crossfade" {
+        if node.shader == "compositor_crossfade" || node.shader == "compositor_dip" || node.shader == "compositor_wipe" {
             if let aID = node.inputs["clipA"], let aTex = textureMap[aID] {
                 encoder.setTexture(aTex, index: 0)
             }
@@ -687,7 +886,20 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
             if let layer2ID = node.inputs["layer2"], let layer2Tex = textureMap[layer2ID] {
                 encoder.setTexture(layer2Tex, index: 1)
             }
-        } else if node.shader == "source_texture" {
+        } else if node.shader == "fx_volumetric_nebula" {
+            // VolumetricNebula.metal expects depthTexture at texture(0)
+            if let depthID = node.inputs["depth"], let depthTex = textureMap[depthID] {
+                encoder.setTexture(depthTex, index: 0)
+            }
+        } else if node.shader == "fx_volumetric_composite" {
+            // VolumetricNebula.metal composite expects scene at texture(0) and volumetric at texture(1)
+            if let sceneID = node.inputs["scene"], let sceneTex = textureMap[sceneID] {
+                encoder.setTexture(sceneTex, index: 0)
+            }
+            if let volID = node.inputs["volumetric"], let volTex = textureMap[volID] {
+                encoder.setTexture(volTex, index: 1)
+            }
+        } else if node.shader == "source_texture" || node.shader == "source_person_mask" {
             // Video source nodes: we preloaded the source texture into textureMap[node.id] before encoding.
             if let src = textureMap[node.id] {
                 encoder.setTexture(src, index: 0)
@@ -706,6 +918,29 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
             }
         } else if node.shader == "source_linear_ramp" || node.shader == "source_test_color" {
             // Source Node: No input texture needed.
+        }
+
+        // Bind any additional named inputs (e.g. masks) for multi-input features.
+        // Convention: primary input uses texture(0) and output uses texture(1) for most kernels.
+        // We bind extra inputs starting at texture(2), in a stable order.
+        do {
+            let extraStartIndex: Int = (node.shader == "compositor_crossfade" || node.shader == "compositor_dip" || node.shader == "compositor_wipe" || node.shader == "compositor_alpha_blend") ? 3 : 2
+
+            var extraKeys = Array(node.inputs.keys)
+            extraKeys.removeAll(where: { $0 == "input" || $0 == "source" })
+
+            func priority(_ k: String) -> (Int, String) {
+                if k == "mask" || k == "faceMask" { return (0, k) }
+                return (1, k)
+            }
+            extraKeys.sort { priority($0) < priority($1) }
+
+            var texIndex = extraStartIndex
+            for key in extraKeys {
+                guard let inputID = node.inputs[key], let tex = textureMap[inputID] else { continue }
+                encoder.setTexture(tex, index: texIndex)
+                texIndex += 1
+            }
         }
         
         // Helper to create texture with request resolution
@@ -733,7 +968,13 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
         }
         retainForFrame(destTex)
         let outputTextureIndex: Int
-        if node.shader == "compositor_crossfade" || node.shader == "compositor_alpha_blend" {
+        if node.shader == "fx_generate_face_mask" {
+            // FaceMaskGenerator.metal uses output texture(0).
+            outputTextureIndex = 0
+        } else if node.shader == "fx_volumetric_composite" {
+            // VolumetricNebula.metal composite uses output texture(2).
+            outputTextureIndex = 2
+        } else if node.shader == "compositor_crossfade" || node.shader == "compositor_dip" || node.shader == "compositor_wipe" || node.shader == "compositor_alpha_blend" {
             // Compositor kernels use output texture(2)
             outputTextureIndex = 2
         } else {
@@ -762,6 +1003,12 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
 
         if node.shader == "compositor_crossfade" {
             bindFloat("mix", 0)
+        } else if node.shader == "compositor_dip" {
+            bindFloat("progress", 0)
+            bindVector3("dipColor", 1)
+        } else if node.shader == "compositor_wipe" {
+            bindFloat("progress", 0)
+            bindFloat("direction", 1)
         } else if node.shader == "compositor_alpha_blend" {
             bindFloat("alpha1", 0)
             bindFloat("alpha2", 1)
@@ -807,6 +1054,30 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
                 _p2: 0
             )
             encoder.setBytes(&params, length: MemoryLayout<ColorGradeParams>.stride, index: 0)
+        } else if node.shader == "fx_false_color_turbo" {
+            // ColorGrading.metal: constant FalseColorParams &params [[buffer(0)]]
+            struct FalseColorParams {
+                var exposure: Float
+                var gamma: Float
+                // Match `float _padding[2]` in Metal.
+                var _p0: Float
+                var _p1: Float
+            }
+
+            func f(_ key: String, default def: Float) -> Float {
+                if let val = node.parameters[key], case .float(let v) = val {
+                    return Float(v)
+                }
+                return def
+            }
+
+            var params = FalseColorParams(
+                exposure: f("exposure", default: 0),
+                gamma: f("gamma", default: 1),
+                _p0: 0,
+                _p1: 0
+            )
+            encoder.setBytes(&params, length: MemoryLayout<FalseColorParams>.stride, index: 0)
         } else if node.shader == "exposure_adjust" {
             bindFloat("ev", 0)
         } else if node.shader == "contrast_adjust" {
@@ -823,12 +1094,36 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
             bindVector3("power", 2)
             bindFloat("saturation", 3)
         } else if node.shader == "fx_generate_face_mask" {
-            if let val = node.parameters["faceRects"], case .floatArray(let rects) = val {
-                encoder.setBytes(rects, length: rects.count * MemoryLayout<Float>.size, index: 0)
-                
-                var count = UInt32(rects.count / 4) // 4 floats per rect
-                encoder.setBytes(&count, length: MemoryLayout<UInt32>.size, index: 1)
+            let rects: [Float]
+            if let val = node.parameters["faceRects"], case .floatArray(let r) = val {
+                rects = r
+            } else {
+                rects = []
             }
+
+            var count = UInt32(rects.count / 4) // 4 floats per rect
+            if rects.isEmpty {
+                let dummy: [Float] = [0, 0, 0, 0]
+                encoder.setBytes(dummy, length: dummy.count * MemoryLayout<Float>.size, index: 0)
+            } else {
+                encoder.setBytes(rects, length: rects.count * MemoryLayout<Float>.size, index: 0)
+            }
+            encoder.setBytes(&count, length: MemoryLayout<UInt32>.size, index: 1)
+        } else if node.shader == "fx_beauty_enhance" {
+            struct BeautyEnhanceParams {
+                var skinSmoothing: Float
+                var intensity: Float
+                var _p0: Float
+                var _p1: Float
+            }
+
+            var params = BeautyEnhanceParams(
+                skinSmoothing: node.float("skinSmoothing"),
+                intensity: node.float("intensity"),
+                _p0: 0,
+                _p1: 0
+            )
+            encoder.setBytes(&params, length: MemoryLayout<BeautyEnhanceParams>.stride, index: 0)
         } else if node.shader == "fx_face_enhance" {
             // Need to bind struct FaceEnhanceParams
             // Manually mapping dict to struct bytes
@@ -954,6 +1249,136 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
                     encoder.setTexture(t, index: 2)
                 }
             }
+        } else if node.shader == "fx_volumetric_nebula" {
+            // VolumetricNebula.metal: constant VolumetricNebulaParams &params [[buffer(0)]]
+            // plus gradient stops [[buffer(1)]] and gradientCount [[buffer(2)]].
+            struct VolumetricNebulaParams {
+                var cameraPosition: SIMD3<Float>
+                var _pad0: Float
+                var cameraForward: SIMD3<Float>
+                var _pad1: Float
+                var cameraUp: SIMD3<Float>
+                var _pad2: Float
+                var cameraRight: SIMD3<Float>
+                var _pad3: Float
+                var fov: Float
+                var aspectRatio: Float
+                var _pad4: SIMD2<Float>
+
+                var volumeMin: SIMD3<Float>
+                var _pad5: Float
+                var volumeMax: SIMD3<Float>
+                var _pad6: Float
+
+                var baseFrequency: Float
+                var octaves: Int32
+                var lacunarity: Float
+                var gain: Float
+                var densityScale: Float
+                var densityOffset: Float
+                var _pad7: SIMD2<Float>
+
+                var time: Float
+                var _pad8: SIMD3<Float>
+                var windVelocity: SIMD3<Float>
+                var _pad9: Float
+
+                var lightDirection: SIMD3<Float>
+                var _pad10: Float
+                var lightColor: SIMD3<Float>
+                var ambientIntensity: Float
+
+                var scatteringCoeff: Float
+                var absorptionCoeff: Float
+                var phaseG: Float
+                var _pad11: Float
+
+                var maxSteps: Int32
+                var shadowSteps: Int32
+                var stepSize: Float
+                var _pad12: Float
+
+                var emissionColorWarm: SIMD3<Float>
+                var _pad13: Float
+                var emissionColorCool: SIMD3<Float>
+                var _pad14: Float
+                var emissionIntensity: Float
+                var hdrScale: Float
+                var debugMode: Float
+                var _pad15: SIMD2<Float>
+            }
+
+            struct GradientStop3D {
+                var color: SIMD3<Float>
+                var position: Float
+            }
+
+            var params = VolumetricNebulaParams(
+                cameraPosition: node.vector3("cameraPosition"),
+                _pad0: 0,
+                cameraForward: node.vector3("cameraForward"),
+                _pad1: 0,
+                cameraUp: node.vector3("cameraUp"),
+                _pad2: 0,
+                cameraRight: node.vector3("cameraRight"),
+                _pad3: 0,
+                fov: node.float("fov"),
+                aspectRatio: node.float("aspectRatio"),
+                _pad4: .zero,
+
+                volumeMin: node.vector3("volumeMin"),
+                _pad5: 0,
+                volumeMax: node.vector3("volumeMax"),
+                _pad6: 0,
+
+                baseFrequency: node.float("baseFrequency"),
+                octaves: Int32(node.float("octaves")),
+                lacunarity: node.float("lacunarity"),
+                gain: node.float("gain"),
+                densityScale: node.float("densityScale"),
+                densityOffset: node.float("densityOffset"),
+                _pad7: .zero,
+
+                time: node.float("time"),
+                _pad8: .zero,
+                windVelocity: node.vector3("windVelocity"),
+                _pad9: 0,
+
+                lightDirection: node.vector3("lightDirection"),
+                _pad10: 0,
+                lightColor: node.vector3("lightColor"),
+                ambientIntensity: node.float("ambientIntensity"),
+
+                scatteringCoeff: node.float("scatteringCoeff"),
+                absorptionCoeff: node.float("absorptionCoeff"),
+                phaseG: node.float("phaseG"),
+                _pad11: 0,
+
+                maxSteps: Int32(node.float("maxSteps")),
+                shadowSteps: Int32(node.float("shadowSteps")),
+                stepSize: node.float("stepSize"),
+                _pad12: 0,
+
+                emissionColorWarm: node.vector3("emissionColorWarm"),
+                _pad13: 0,
+                emissionColorCool: node.vector3("emissionColorCool"),
+                _pad14: 0,
+                emissionIntensity: node.float("emissionIntensity"),
+                hdrScale: node.float("hdrScale"),
+                debugMode: node.float("debugMode"),
+                _pad15: .zero
+            )
+
+            encoder.setBytes(&params, length: MemoryLayout<VolumetricNebulaParams>.stride, index: 0)
+
+            // Provide a small default gradient buffer (even if unused by the kernel today).
+            let gradient: [GradientStop3D] = [
+                GradientStop3D(color: SIMD3<Float>(0.1, 0.2, 0.8), position: 0.0),
+                GradientStop3D(color: SIMD3<Float>(1.0, 0.4, 0.1), position: 1.0)
+            ]
+            var gradientCount: Int32 = Int32(gradient.count)
+            encoder.setBytes(gradient, length: MemoryLayout<GradientStop3D>.stride * gradient.count, index: 1)
+            encoder.setBytes(&gradientCount, length: MemoryLayout<Int32>.stride, index: 2)
         }
         
         // D. Dispatch

@@ -23,9 +23,16 @@ public enum GeminiQC {
         }
     }
 
-    public struct Verdict: Sendable {
+    public struct Verdict: Sendable, Codable, Equatable {
         public var accepted: Bool
         public var rawText: String
+        public var model: String?
+
+        public init(accepted: Bool, rawText: String, model: String? = nil) {
+            self.accepted = accepted
+            self.rawText = rawText
+            self.model = model
+        }
     }
 
     public struct UsageContext: Sendable {
@@ -52,7 +59,7 @@ public enum GeminiQC {
 
         // Default posture: local-only unless explicitly enabled by policy.
         if !usage.policy.allowsNetworkRequests(privacy: usage.privacy) {
-            return Verdict(accepted: true, rawText: "SKIPPED (AIUsagePolicy disallows network/media)")
+            return Verdict(accepted: true, rawText: "SKIPPED (AIUsagePolicy disallows network/media)", model: nil)
         }
 
         // If no key is present and caller doesn't require it, skip.
@@ -61,7 +68,7 @@ public enum GeminiQC {
             if requireKey {
                 throw GeminiError.misconfigured("GEMINI_API_KEY (or API__GOOGLE_API_KEY) not present in environment")
             }
-            return Verdict(accepted: true, rawText: "SKIPPED (no GEMINI_API_KEY)")
+            return Verdict(accepted: true, rawText: "SKIPPED (no GEMINI_API_KEY)", model: nil)
         }
 
         var notes: [String] = []
@@ -74,7 +81,8 @@ public enum GeminiQC {
             if gate.shouldBlockMediaUpload {
                 return Verdict(
                     accepted: false,
-                    rawText: "REJECTED (local QC gate): \(gate.reason)"
+                    rawText: "REJECTED (local QC gate): \(gate.reason)",
+                    model: nil
                 )
             }
             if !gate.notes.isEmpty {
@@ -142,7 +150,7 @@ public enum GeminiQC {
 
         // Parse minimal JSON acceptance
         let accepted = parseAcceptedFlag(from: text) ?? false
-        return Verdict(accepted: accepted, rawText: text)
+        return Verdict(accepted: accepted, rawText: text, model: config.model)
     }
 
     private struct LocalGateResult {

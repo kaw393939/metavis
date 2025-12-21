@@ -3,10 +3,11 @@ import XCTest
 import MetaVisCore
 import MetaVisTimeline
 import AVFoundation
+import Accelerate
 
 final class AudioGraphTests: XCTestCase {
     
-    func testGraphConstruction() throws {
+    func testGraphConstruction() async throws {
         // 1. Create a Timeline
         let clip = Clip(
             name: "Sine Element",
@@ -19,7 +20,7 @@ final class AudioGraphTests: XCTestCase {
         
         // 2. Render
         let renderer = AudioTimelineRenderer()
-        let buffer = try renderer.render(timeline: timeline, timeRange: Time.zero..<Time(seconds: 0.5))
+        let buffer = try await renderer.render(timeline: timeline, timeRange: Time.zero..<Time(seconds: 0.5))
         
         // 3. Verify
         XCTAssertNotNil(buffer)
@@ -44,7 +45,7 @@ final class AudioGraphTests: XCTestCase {
         XCTAssertTrue(hasSignal, "Buffer should contain audio signal")
     }
     
-    func testMixing() throws {
+    func testMixing() async throws {
         // Two sine waves
         let clip1 = Clip(
             name: "Sine 1",
@@ -65,7 +66,7 @@ final class AudioGraphTests: XCTestCase {
         let timeline = Timeline(tracks: [track1, track2], duration: Time(seconds: 1.0))
         
         let renderer = AudioTimelineRenderer()
-        let buffer = try renderer.render(timeline: timeline, timeRange: Time.zero..<Time(seconds: 0.1))
+        let buffer = try await renderer.render(timeline: timeline, timeRange: Time.zero..<Time(seconds: 0.1))
         
         XCTAssertNotNil(buffer)
         
@@ -84,5 +85,39 @@ final class AudioGraphTests: XCTestCase {
         // Or check existence.
         
         XCTAssertTrue(abs(data[1000]) > 0.001)
+    }
+
+    func testSafetyLimiterCapsPeakMagnitude() async throws {
+        let clip = Clip(
+            name: "Impulse",
+            asset: AssetReference(sourceFn: "ligm://audio/impulse?interval=0.01"),
+            startTime: .zero,
+            duration: Time(seconds: 0.05)
+        )
+
+        let t1 = Track(name: "A1", kind: .audio, clips: [clip])
+        let t2 = Track(name: "A2", kind: .audio, clips: [clip])
+        let t3 = Track(name: "A3", kind: .audio, clips: [clip])
+        let timeline = Timeline(tracks: [t1, t2, t3], duration: Time(seconds: 0.05))
+
+        let renderer = AudioTimelineRenderer()
+        let buffer = try await renderer.render(timeline: timeline, timeRange: Time.zero..<Time(seconds: 0.02))
+        XCTAssertNotNil(buffer)
+
+        guard let buf = buffer, let channels = buf.floatChannelData else {
+            XCTFail("No channel data")
+            return
+        }
+
+        let frames = Int(buf.frameLength)
+        var maxL: Float = 0
+        var maxR: Float = 0
+        vDSP_maxmgv(channels[0], 1, &maxL, vDSP_Length(frames))
+        vDSP_maxmgv(channels[1], 1, &maxR, vDSP_Length(frames))
+
+        XCTAssertLessThanOrEqual(maxL, 0.9801)
+        XCTAssertLessThanOrEqual(maxR, 0.9801)
+        XCTAssertGreaterThan(maxL, 0.95)
+        XCTAssertGreaterThan(maxR, 0.95)
     }
 }

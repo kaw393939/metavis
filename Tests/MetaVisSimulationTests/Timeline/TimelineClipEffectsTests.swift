@@ -5,10 +5,10 @@ import MetaVisTimeline
 @testable import MetaVisSimulation
 
 final class TimelineClipEffectsTests: XCTestCase {
-    func test_timelineCompiler_ignoresIntrinsicEffects() async throws {
+    func test_timelineCompiler_appliesRetimeAsTimeMapping_forProceduralSources() async throws {
         let clip = Clip(
             name: "Test",
-            asset: AssetReference(sourceFn: "ligm://source_test_color"),
+            asset: AssetReference(sourceFn: "ligm://video/zone_plate"),
             startTime: .zero,
             duration: Time(seconds: 1.0),
             effects: [
@@ -21,7 +21,11 @@ final class TimelineClipEffectsTests: XCTestCase {
         let compiler = TimelineCompiler()
         let quality = QualityProfile(name: "Test", fidelity: .draft, resolutionHeight: 256, colorDepth: 32)
 
-        _ = try await compiler.compile(timeline: timeline, at: Time(seconds: 0.0), quality: quality)
+        let request = try await compiler.compile(timeline: timeline, at: Time(seconds: 0.25), quality: quality)
+
+        let node = try XCTUnwrap(request.graph.nodes.first(where: { $0.shader == "fx_zone_plate" }))
+        let timeParam = try XCTUnwrap(node.parameters["time"])
+        XCTAssertEqual(timeParam, .float(0.5))
     }
 
     func test_timelineCompiler_insertsClipEffectsNodes() async throws {

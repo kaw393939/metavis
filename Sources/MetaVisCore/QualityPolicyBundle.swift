@@ -25,8 +25,54 @@ public struct VideoContainerPolicy: Codable, Sendable, Equatable {
     }
 }
 
+public struct VideoContentPolicy: Codable, Sendable, Equatable {
+    public struct ColorStatsPolicy: Codable, Sendable, Equatable {
+        public var enforce: Bool
+        public var minMeanLuma: Float
+        public var maxMeanLuma: Float
+        public var maxChannelDelta: Float
+        public var minLowLumaFraction: Float
+        public var minHighLumaFraction: Float
+        public var maxDimension: Int
+
+        public init(
+            enforce: Bool = false,
+            minMeanLuma: Float = 0,
+            maxMeanLuma: Float = 1,
+            maxChannelDelta: Float = 1,
+            minLowLumaFraction: Float = 0,
+            minHighLumaFraction: Float = 0,
+            maxDimension: Int = 256
+        ) {
+            self.enforce = enforce
+            self.minMeanLuma = minMeanLuma
+            self.maxMeanLuma = maxMeanLuma
+            self.maxChannelDelta = maxChannelDelta
+            self.minLowLumaFraction = minLowLumaFraction
+            self.minHighLumaFraction = minHighLumaFraction
+            self.maxDimension = maxDimension
+        }
+    }
+
+    public var minAdjacentDistance: Double
+    public var enforceTemporalVarietyIfMultipleClips: Bool
+    public var colorStats: ColorStatsPolicy?
+
+    public init(
+        minAdjacentDistance: Double = 0.020,
+        enforceTemporalVarietyIfMultipleClips: Bool = true,
+        colorStats: ColorStatsPolicy? = nil
+    ) {
+        self.minAdjacentDistance = minAdjacentDistance
+        self.enforceTemporalVarietyIfMultipleClips = enforceTemporalVarietyIfMultipleClips
+        self.colorStats = colorStats
+    }
+}
+
 public struct DeterministicQCPolicy: Codable, Sendable, Equatable {
     public var video: VideoContainerPolicy
+
+    public var content: VideoContentPolicy?
 
     public var requireAudioTrack: Bool
     public var requireAudioNotSilent: Bool
@@ -35,12 +81,14 @@ public struct DeterministicQCPolicy: Codable, Sendable, Equatable {
 
     public init(
         video: VideoContainerPolicy,
+        content: VideoContentPolicy? = nil,
         requireAudioTrack: Bool,
         requireAudioNotSilent: Bool,
         audioSampleSeconds: Double = 0.5,
         minAudioPeak: Float = 0.0005
     ) {
         self.video = video
+        self.content = content
         self.requireAudioTrack = requireAudioTrack
         self.requireAudioNotSilent = requireAudioNotSilent
         self.audioSampleSeconds = audioSampleSeconds

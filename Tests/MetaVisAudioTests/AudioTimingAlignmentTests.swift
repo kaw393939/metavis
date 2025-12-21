@@ -6,7 +6,7 @@ import AVFoundation
 
 final class AudioTimingAlignmentTests: XCTestCase {
 
-    func testOffsetClipProducesSilenceBeforeStart() throws {
+    func testOffsetClipProducesSilenceBeforeStart() async throws {
         // Clip starts at 0.5s, lasts 0.5s.
         let clip = Clip(
             name: "Offset Sine",
@@ -19,7 +19,7 @@ final class AudioTimingAlignmentTests: XCTestCase {
         let timeline = Timeline(tracks: [track], duration: Time(seconds: 1.0))
 
         let renderer = AudioTimelineRenderer()
-        guard let buffer = try renderer.render(timeline: timeline, timeRange: Time.zero..<Time(seconds: 1.0), sampleRate: 48_000) else {
+        guard let buffer = try await renderer.render(timeline: timeline, timeRange: Time.zero..<Time(seconds: 1.0), sampleRate: 48_000) else {
             XCTFail("Expected audio buffer")
             return
         }

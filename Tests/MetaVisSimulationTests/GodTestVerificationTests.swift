@@ -39,7 +39,9 @@ final class GodTestVerificationTests: XCTestCase {
         // Verify time parameter is bound
         if let node = zoneNode, let timeParam = node.parameters["time"] {
             if case .float(let t) = timeParam {
-                XCTAssertEqual(t, 12.5, accuracy: 0.1)
+                // Generators use clip-local time (timeline time minus clip start, plus offset).
+                // Zone Plate runs from 10s-15s, so at t=12.5 it should see ~2.5 seconds.
+                XCTAssertEqual(t, 2.5, accuracy: 0.1)
             } else {
                 XCTFail("Zone Plate time param should be float")
             }

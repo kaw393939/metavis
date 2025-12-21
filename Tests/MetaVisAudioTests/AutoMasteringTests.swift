@@ -6,7 +6,7 @@ import AVFoundation
 
 final class AutoMasteringTests: XCTestCase {
     
-    func testEngineerOptimizesLevels() throws {
+    func testEngineerOptimizesLevels() async throws {
         // 1. Create a Quiet Clip (-20dB approx)
         // Sine wave at amplitude 0.1 is -20dBFS relative to 1.0 peak
         // 20*log10(0.1) = -20 dB.
@@ -23,10 +23,10 @@ final class AutoMasteringTests: XCTestCase {
         let agent = EngineerAgent()
         
         // 3. Run Optimization (Target -14 LUFS)
-        try agent.optimize(timeline: timeline, renderer: renderer, governance: .spotify)
+        try await agent.optimize(timeline: timeline, renderer: renderer, governance: .spotify)
         
         // 4. Render FINAL pass
-        let finalBuffer = try renderer.render(timeline: timeline, timeRange: Time.zero..<Time(seconds: 1.0))
+        let finalBuffer = try await renderer.render(timeline: timeline, timeRange: Time.zero..<Time(seconds: 1.0))
         
         // 5. Verify Levels increased
         let analyzer = LoudnessAnalyzer()

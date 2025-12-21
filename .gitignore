@@ -19,6 +19,6 @@ DerivedData/
 test_outputs/
 
 ## Non-source content (keep repo focused on Sources/ + Tests/)
-Docs/
-research_notes/
+# Docs/
+# research_notes/
 assets/

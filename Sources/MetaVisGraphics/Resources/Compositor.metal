@@ -80,3 +80,69 @@ kernel void compositor_crossfade(
     
     output.write(result, gid);
 }
+
+// MARK: - Dip (2-Layer)
+// Fade from clipA -> dipColor -> clipB.
+
+kernel void compositor_dip(
+    texture2d<float, access::read> clipA [[texture(0)]],
+    texture2d<float, access::read> clipB [[texture(1)]],
+    texture2d<float, access::write> output [[texture(2)]],
+    constant float& p [[buffer(0)]],      // 0.0 = all A, 0.5 = dipColor, 1.0 = all B
+    constant float4& dipColor [[buffer(1)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    if (gid.x >= output.get_width() || gid.y >= output.get_height()) return;
+
+    float4 colorA = clipA.read(gid);
+    float4 colorB = clipB.read(gid);
+    float4 c = dipColor;
+
+    float t = clamp(p, 0.0f, 1.0f);
+    float4 result;
+    if (t < 0.5f) {
+        float u = t * 2.0f;
+        result = mix(colorA, c, u);
+    } else {
+        float u = (t - 0.5f) * 2.0f;
+        result = mix(c, colorB, u);
+    }
+
+    output.write(result, gid);
+}
+
+// MARK: - Wipe (2-Layer)
+// Reveals clipB over clipA in a direction.
+// direction: 0=leftToRight, 1=rightToLeft, 2=topToBottom, 3=bottomToTop
+
+kernel void compositor_wipe(
+    texture2d<float, access::read> clipA [[texture(0)]],
+    texture2d<float, access::read> clipB [[texture(1)]],
+    texture2d<float, access::write> output [[texture(2)]],
+    constant float& p [[buffer(0)]],
+    constant float& direction [[buffer(1)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    if (gid.x >= output.get_width() || gid.y >= output.get_height()) return;
+
+    float4 colorA = clipA.read(gid);
+    float4 colorB = clipB.read(gid);
+
+    float t = clamp(p, 0.0f, 1.0f);
+    int dir = (int)round(direction);
+
+    float w = (float)max((uint)1, output.get_width() - 1);
+    float h = (float)max((uint)1, output.get_height() - 1);
+    float2 uv = float2((float)gid.x / w, (float)gid.y / h);
+
+    bool showB = false;
+    switch (dir) {
+        case 0: showB = (uv.x <= t); break;           // left -> right
+        case 1: showB = (uv.x >= (1.0f - t)); break;  // right -> left
+        case 2: showB = (uv.y <= t); break;           // top -> bottom
+        case 3: showB = (uv.y >= (1.0f - t)); break;  // bottom -> top
+        default: showB = (uv.x <= t); break;
+    }
+
+    output.write(showB ? colorB : colorA, gid);
+}

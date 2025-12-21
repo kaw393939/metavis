@@ -295,10 +295,10 @@ Scope note:
   - Exports curated `MetaVisSession.DemoRecipes` using `MetalSimulationEngine` + `VideoExporter` into `test_outputs/project_exports/` (or `--out`).
   - Large-asset opt-in via `--allow-large`.
   - Files: `Sources/MetaVisLab/ExportDemosCommand.swift`.
-- **`assess-local`**:
-  - Produces a local “what the system sees” pack: sampled JPEG frames + face boxes, fingerprints, luma/color stats, thumbnail, contact sheet, and a JSON report.
+- **`sensors ingest`**:
+  - Sprint 15 master sensor ingest: writes deterministic `sensors.json` (`MasterSensors`, schema v3).
   - Large-asset opt-in via `--allow-large`.
-  - Files: `Sources/MetaVisLab/LocalAssessmentCommand.swift`.
+  - Files: `Sources/MetaVisLab/SensorsCommand.swift`, `Sources/MetaVisPerception/MasterSensorIngestor.swift`.
 - **`probe-clip`**:
   - Debug tool to probe decode across timestamps; includes a direct `AVAssetReader` sanity check.
   - Files: `Sources/MetaVisLab/ProbeClipCommand.swift`.

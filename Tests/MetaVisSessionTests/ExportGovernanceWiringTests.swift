@@ -12,7 +12,7 @@ final class ExportGovernanceWiringTests: XCTestCase {
         private(set) var lastTimeline: Timeline?
         private(set) var lastOutputURL: URL?
         private(set) var lastQuality: QualityProfile?
-        private(set) var lastFrameRate: Int32?
+        private(set) var lastFrameRate: Int?
         private(set) var lastCodec: AVVideoCodecType?
         private(set) var lastAudioPolicy: AudioPolicy?
         private(set) var lastGovernance: ExportGovernance?
@@ -21,7 +21,7 @@ final class ExportGovernanceWiringTests: XCTestCase {
             timeline: Timeline,
             to outputURL: URL,
             quality: QualityProfile,
-            frameRate: Int32,
+            frameRate: Int,
             codec: AVVideoCodecType,
             audioPolicy: AudioPolicy,
             governance: ExportGovernance

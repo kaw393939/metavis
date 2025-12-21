@@ -1,0 +1,2 @@
+# Historical sprint docs use a lightweight Markdown style; exclude from lint noise
+Sprints/**

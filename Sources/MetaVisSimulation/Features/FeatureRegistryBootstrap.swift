@@ -30,5 +30,8 @@ public actor FeatureRegistryBootstrap {
             didLoadBundleManifests = true
             await trace.record("feature_registry.bootstrap.bundle_manifests.end", fields: [:])
         }
+
+        // Final safety belt: validate the in-memory registry.
+        try await FeatureRegistry.shared.validateRegistry()
     }
 }

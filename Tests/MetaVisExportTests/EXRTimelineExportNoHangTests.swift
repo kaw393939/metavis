@@ -307,7 +307,7 @@ final class EXRTimelineExportNoHangTests: XCTestCase {
             throw XCTSkip("Missing test asset: \(exr2.path)")
         }
 
-        let fps: Int32 = 24
+        let fps: Int = 24
         let secondsPer: Double = 1.0
         let transition = Transition.crossfade(duration: Time(seconds: 0.25), easing: .linear)
 

@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import CoreGraphics
+import CoreImage
 import CoreVideo
 import VideoToolbox
 import MetaVisPerception
@@ -8,6 +9,7 @@ import MetaVisPerception
 public enum VideoContentQC {
     private static let metalFingerprinter = MetalQCFingerprint.shared
     private static let metalColorStats = MetalQCColorStats.shared
+    private static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
     private final class PixelBufferSampler {
         enum SamplerError: Swift.Error, LocalizedError {
@@ -206,6 +208,171 @@ public enum VideoContentQC {
                 + (stdB - other.stdB) * (stdB - other.stdB)
             return (dm + ds).squareRoot()
         }
+    }
+
+    public struct PerceptualHash: Sendable {
+        public var hash64: UInt64
+
+        public init(hash64: UInt64) {
+            self.hash64 = hash64
+        }
+
+        public func hammingDistance(to other: PerceptualHash) -> Int {
+            return Int((hash64 ^ other.hash64).nonzeroBitCount)
+        }
+    }
+
+    public struct LumaSignature: Sendable {
+        public var dimension: Int
+        public var luma: [UInt8]
+
+        public init(dimension: Int, luma: [UInt8]) {
+            self.dimension = dimension
+            self.luma = luma
+        }
+
+        public func meanAbsDiff(to other: LumaSignature) -> Double {
+            guard dimension == other.dimension, luma.count == other.luma.count, !luma.isEmpty else {
+                return .infinity
+            }
+            var sum: Int = 0
+            for i in 0..<luma.count {
+                sum += abs(Int(luma[i]) - Int(other.luma[i]))
+            }
+            return Double(sum) / Double(luma.count)
+        }
+    }
+
+    public static func lumaSignatures(
+        movieURL: URL,
+        samples: [Sample],
+        dimension: Int = 32
+    ) async throws -> [(String, LumaSignature)] {
+        let sampler = try await PixelBufferSampler.make(url: movieURL)
+
+        var out: [(String, LumaSignature)] = []
+        out.reserveCapacity(samples.count)
+
+        for s in samples {
+            let time = CMTime(seconds: s.timeSeconds, preferredTimescale: 600)
+            let pb = try sampler.pixelBuffer(closestTo: time)
+            let luma = try downsampledLuma(pixelBuffer: pb, dimension: dimension)
+            out.append((s.label, LumaSignature(dimension: dimension, luma: luma)))
+        }
+
+        return out
+    }
+
+    public static func perceptualHashes(
+        movieURL: URL,
+        samples: [Sample]
+    ) async throws -> [(String, PerceptualHash)] {
+        let sampler = try await PixelBufferSampler.make(url: movieURL)
+
+        var out: [(String, PerceptualHash)] = []
+        out.reserveCapacity(samples.count)
+
+        for s in samples {
+            let time = CMTime(seconds: s.timeSeconds, preferredTimescale: 600)
+            let pb = try sampler.pixelBuffer(closestTo: time)
+            let hash = try averageHash64(pixelBuffer: pb)
+            out.append((s.label, PerceptualHash(hash64: hash)))
+        }
+
+        return out
+    }
+
+    private static func averageHash64(pixelBuffer: CVPixelBuffer) throws -> UInt64 {
+        // Downsample to 8x8 and compute a deterministic aHash over luma.
+        let image = CIImage(cvPixelBuffer: pixelBuffer)
+
+        let extent = image.extent
+        let targetW: CGFloat = 8
+        let targetH: CGFloat = 8
+
+        let sx = targetW / max(1.0, extent.width)
+        let sy = targetH / max(1.0, extent.height)
+        let scale = min(sx, sy)
+
+        let scaled = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let moved = scaled.transformed(by: CGAffineTransform(translationX: -scaled.extent.origin.x, y: -scaled.extent.origin.y))
+        let finalRect = CGRect(x: 0, y: 0, width: targetW, height: targetH)
+        let finalImage = moved.cropped(to: finalRect)
+
+        guard let cg = ciContext.createCGImage(finalImage, from: finalRect) else {
+            throw NSError(domain: "MetaVisQC", code: 41, userInfo: [NSLocalizedDescriptionKey: "Failed to create 8x8 CGImage"])
+        }
+        guard let cfData = cg.dataProvider?.data else {
+            throw NSError(domain: "MetaVisQC", code: 42, userInfo: [NSLocalizedDescriptionKey: "Missing CGImage pixel data"])
+        }
+
+        let data = cfData as Data
+        let bytes = [UInt8](data)
+        let bytesPerPixel = 4
+        guard bytes.count >= Int(targetW * targetH) * bytesPerPixel else {
+            throw NSError(domain: "MetaVisQC", code: 43, userInfo: [NSLocalizedDescriptionKey: "Unexpected CGImage pixel data size"])
+        }
+
+        var luma: [UInt8] = []
+        luma.reserveCapacity(64)
+
+        for i in 0..<(Int(targetW) * Int(targetH)) {
+            let base = i * bytesPerPixel
+            let r = Int(bytes[base + 0])
+            let g = Int(bytes[base + 1])
+            let b = Int(bytes[base + 2])
+            // ITU-R BT.601 luma approximation.
+            let y = (299 * r + 587 * g + 114 * b) / 1000
+            luma.append(UInt8(max(0, min(255, y))))
+        }
+
+        return FaceIdentityService.averageHash64(fromLuma8x8: luma)
+    }
+
+    private static func downsampledLuma(pixelBuffer: CVPixelBuffer, dimension: Int) throws -> [UInt8] {
+        let dim = max(2, min(256, dimension))
+        let image = CIImage(cvPixelBuffer: pixelBuffer)
+
+        let extent = image.extent
+        let targetW = CGFloat(dim)
+        let targetH = CGFloat(dim)
+
+        let sx = targetW / max(1.0, extent.width)
+        let sy = targetH / max(1.0, extent.height)
+        let scale = min(sx, sy)
+
+        let scaled = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let moved = scaled.transformed(by: CGAffineTransform(translationX: -scaled.extent.origin.x, y: -scaled.extent.origin.y))
+        let finalRect = CGRect(x: 0, y: 0, width: targetW, height: targetH)
+        let finalImage = moved.cropped(to: finalRect)
+
+        guard let cg = ciContext.createCGImage(finalImage, from: finalRect) else {
+            throw NSError(domain: "MetaVisQC", code: 51, userInfo: [NSLocalizedDescriptionKey: "Failed to create downsampled CGImage"])
+        }
+        guard let cfData = cg.dataProvider?.data else {
+            throw NSError(domain: "MetaVisQC", code: 52, userInfo: [NSLocalizedDescriptionKey: "Missing CGImage pixel data"])
+        }
+
+        let data = cfData as Data
+        let bytes = [UInt8](data)
+        let bytesPerPixel = 4
+        guard bytes.count >= dim * dim * bytesPerPixel else {
+            throw NSError(domain: "MetaVisQC", code: 53, userInfo: [NSLocalizedDescriptionKey: "Unexpected CGImage pixel data size"])
+        }
+
+        var luma: [UInt8] = []
+        luma.reserveCapacity(dim * dim)
+
+        for i in 0..<(dim * dim) {
+            let base = i * bytesPerPixel
+            let r = Int(bytes[base + 0])
+            let g = Int(bytes[base + 1])
+            let b = Int(bytes[base + 2])
+            let y = (299 * r + 587 * g + 114 * b) / 1000
+            luma.append(UInt8(max(0, min(255, y))))
+        }
+
+        return luma
     }
 
     /// Samples frames and computes a lightweight fingerprint; fails if adjacent samples are too similar.

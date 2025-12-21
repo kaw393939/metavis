@@ -13,7 +13,7 @@ enum EXRTimelineCommand {
         var secondsPerImage: Double
         var transition: Transition
         var resolutionHeight: Int
-        var frameRate: Int32
+        var frameRate: Int
         var codec: AVVideoCodecType
         var extractEditedEXR: Bool
     }
@@ -163,7 +163,7 @@ enum EXRTimelineCommand {
         var transitionSeconds: Double = 0.25
         var easingName: String = "linear"
         var resolutionHeight: Int = 1080
-        var frameRate: Int32 = 24
+        var frameRate: Int = 24
         var codec: AVVideoCodecType = .hevc
         var extractEditedEXR = true
 
@@ -202,7 +202,7 @@ enum EXRTimelineCommand {
             case "--fps":
                 i += 1
                 guard i < args.count else { throw usage("Missing value for --fps") }
-                frameRate = Int32(args[i]) ?? frameRate
+                frameRate = Int(args[i]) ?? frameRate
             case "--codec":
                 i += 1
                 guard i < args.count else { throw usage("Missing value for --codec") }

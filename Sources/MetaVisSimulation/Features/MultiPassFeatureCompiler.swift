@@ -8,7 +8,6 @@ import MetaVisCore
 public struct MultiPassFeatureCompiler: Sendable {
     public enum Error: Swift.Error, Sendable, Equatable {
         case missingExternalInput(String)
-        case unsupportedInputArity(pass: String, count: Int)
     }
 
     private let scheduler: PassScheduler
@@ -50,10 +49,6 @@ public struct MultiPassFeatureCompiler: Sendable {
         var produced: [String: UUID] = [:] // outputName -> node id
 
         for pass in ordered {
-            if pass.inputs.count > 1 {
-                throw Error.unsupportedInputArity(pass: pass.logicalName, count: pass.inputs.count)
-            }
-
             let shaderName: String
             if let f = pass.function {
                 shaderName = f
@@ -66,17 +61,29 @@ public struct MultiPassFeatureCompiler: Sendable {
 
             var nodeInputs: [String: UUID] = [:]
 
-            if let inputName = pass.inputs.first {
-                if let upstream = produced[inputName] {
-                    nodeInputs["input"] = upstream
-                } else if let ext = externalInputs[inputName] {
-                    nodeInputs["input"] = ext
-                } else if inputName == "input", let ext = externalInputs["input"] ?? externalInputs["source"] {
-                    nodeInputs["input"] = ext
-                } else if inputName == "source", let ext = externalInputs["source"] ?? externalInputs["input"] {
-                    nodeInputs["input"] = ext
+            // Convention:
+            // - Single-input passes bind that input to the primary port "input".
+            // - Multi-input passes bind the first input to primary port "input",
+            //   and bind the remaining inputs using their declared names.
+            for (i, inputName) in pass.inputs.enumerated() {
+                let upstream: UUID
+                if let id = produced[inputName] {
+                    upstream = id
+                } else if let id = externalInputs[inputName] {
+                    upstream = id
+                } else if inputName == "input", let id = externalInputs["input"] ?? externalInputs["source"] {
+                    upstream = id
+                } else if inputName == "source", let id = externalInputs["source"] ?? externalInputs["input"] {
+                    upstream = id
                 } else {
                     throw Error.missingExternalInput(inputName)
+                }
+
+                if pass.inputs.count == 1 {
+                    nodeInputs["input"] = upstream
+                } else {
+                    let port = (i == 0) ? "input" : inputName
+                    nodeInputs[port] = upstream
                 }
             }
 
@@ -96,7 +103,12 @@ public struct MultiPassFeatureCompiler: Sendable {
     }
 
     private static func normalizeExternalInputs(_ externalInputs: [String: UUID]) -> [String: UUID] {
-        // Current engine convention: a single primary input is named `input`.
+        // Preserve multi-input features (e.g. `input` + `mask`, `source` + `faceMask`).
+        guard externalInputs.count <= 1 else {
+            return externalInputs
+        }
+
+        // Engine convention: a single primary input is named `input`.
         if let input = externalInputs["input"] {
             return ["input": input]
         }

@@ -1,0 +1,100 @@
+import Foundation
+import XCTest
+import MetaVisCore
+import MetaVisExport
+import MetaVisPerception
+@testable import MetaVisLab
+
+final class DiarizeCommandContractTests: XCTestCase {
+
+    func test_emits_vtt_with_voice_tags() async throws {
+        let outDir = URL(fileURLWithPath: "test_outputs/_diarize_test", isDirectory: true)
+        try? FileManager.default.removeItem(at: outDir)
+        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+
+        let sensorsURL = outDir.appendingPathComponent("sensors.json")
+        let transcriptURL = outDir.appendingPathComponent("transcript.words.v1.jsonl")
+
+        // Minimal sensors: one face + one speechLike segment.
+        let faceId = UUID(uuidString: "00000000-0000-0000-0000-000000000123")!
+        let sensors = makeSensors(faceId: faceId)
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let sensorsData = try enc.encode(sensors)
+        try sensorsData.write(to: sensorsURL, options: [.atomic])
+
+        // Minimal transcript JSONL.
+        let words: [TranscriptWordV1] = [
+            TranscriptWordV1(
+                schema: "transcript.word.v1",
+                wordId: "w1",
+                word: "hello",
+                confidence: 1.0,
+                sourceTimeTicks: 60000,
+                sourceTimeEndTicks: 65000,
+                speakerId: nil,
+                speakerLabel: nil,
+                timelineTimeTicks: 60000,
+                timelineTimeEndTicks: 65000,
+                clipId: nil,
+                segmentId: nil
+            )
+        ]
+
+        let jsonEnc = JSONEncoder()
+        jsonEnc.outputFormatting = [.sortedKeys]
+        var jsonl = Data()
+        for w in words {
+            jsonl.append(try jsonEnc.encode(w))
+            jsonl.append(0x0A)
+        }
+        try jsonl.write(to: transcriptURL, options: [.atomic])
+
+        try await DiarizeCommand.run(args: [
+            "--sensors", sensorsURL.path,
+            "--transcript", transcriptURL.path,
+            "--out", outDir.path
+        ])
+
+        let vttURL = outDir.appendingPathComponent("captions.vtt")
+        let raw = try String(contentsOf: vttURL, encoding: .utf8)
+        XCTAssertTrue(raw.contains("<v T1>"), "Expected VTT voice tag. Got:\n\(raw)")
+
+        let mapURL = outDir.appendingPathComponent("speaker_map.v1.json")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: mapURL.path))
+    }
+
+    private func makeSensors(faceId: UUID) -> MasterSensors {
+        MasterSensors(
+            schemaVersion: 4,
+            source: .init(path: "synthetic.mov", durationSeconds: 10.0, width: 1920, height: 1080, nominalFPS: 30),
+            sampling: .init(videoStrideSeconds: 0.25, maxVideoSeconds: 10.0, audioAnalyzeSeconds: 10.0),
+            videoSamples: [
+                .init(
+                    time: 1.0,
+                    meanLuma: 0,
+                    skinLikelihood: 0,
+                    dominantColors: [],
+                    faces: [
+                        .init(trackId: faceId, rect: CGRect(x: 0.4, y: 0.2, width: 0.2, height: 0.2), personId: "P0")
+                    ],
+                    personMaskPresence: nil,
+                    peopleCountEstimate: 1
+                )
+            ],
+            audioSegments: [
+                .init(start: 0.0, end: 10.0, kind: .speechLike, confidence: 0.9)
+            ],
+            audioFrames: nil,
+            audioBeats: nil,
+            warnings: [],
+            descriptors: nil,
+            suggestedStart: nil,
+            summary: .init(
+                analyzedSeconds: 10.0,
+                scene: .init(indoorOutdoor: .init(label: .unknown, confidence: 0.0), lightSource: .init(label: .unknown, confidence: 0.0)),
+                audio: .init(approxRMSdBFS: -20, approxPeakDB: -3)
+            )
+        )
+    }
+}

@@ -74,6 +74,13 @@ struct FaceEnhanceParams {
     float debugMode;
 };
 
+struct BeautyEnhanceParams {
+    float skinSmoothing;
+    float intensity;
+    float _p0;
+    float _p1;
+};
+
 // MARK: - Main Kernel
 
 kernel void fx_face_enhance(
@@ -133,4 +140,42 @@ kernel void fx_face_enhance(
     float3 finalColor = mix(color, enhanced, params.intensity * mask);
     
     dest.write(float4(finalColor, sourceColor.a), gid);
+}
+
+// MARK: - Simple Beauty Enhance (single-input)
+
+kernel void fx_beauty_enhance(
+    texture2d<float, access::sample> source [[texture(0)]],
+    texture2d<float, access::write> dest [[texture(1)]],
+    constant BeautyEnhanceParams& params [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    if (gid.x >= dest.get_width() || gid.y >= dest.get_height()) return;
+
+    constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::linear);
+    float2 texelSize = 1.0 / float2(source.get_width(), source.get_height());
+    float2 uv = (float2(gid) + 0.5) * texelSize;
+
+    float4 src = source.sample(s, uv);
+    float3 color = src.rgb;
+
+    float intensity = saturate(params.intensity);
+    float smooth = saturate(params.skinSmoothing);
+    if (intensity < 0.001 || smooth < 0.001) {
+        dest.write(src, gid);
+        return;
+    }
+
+    // Only affect likely skin-tones to avoid softening the whole frame.
+    float skinWeight = FaceEnhance::skinToneWeight(color);
+    if (skinWeight < 0.01) {
+        dest.write(src, gid);
+        return;
+    }
+
+    float3 smoothed = FaceEnhance::bilateralFilter(source, s, uv, texelSize, smooth);
+    float blend = skinWeight * intensity * (0.25 + 0.55 * smooth);
+
+    float3 outColor = mix(color, smoothed, blend);
+    dest.write(float4(outColor, src.a), gid);
 }

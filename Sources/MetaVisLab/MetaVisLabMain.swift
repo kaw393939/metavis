@@ -15,10 +15,6 @@ enum MetaVisLabProgram {
 
         if let cmd = args.first {
             switch cmd {
-            case "assess-local":
-                try await LocalAssessmentCommand.run(args: Array(args.dropFirst()))
-                return
-
             case "export-demos":
                 try await ExportDemosCommand.run(args: Array(args.dropFirst()))
                 return
@@ -27,8 +23,56 @@ enum MetaVisLabProgram {
                 try await EXRTimelineCommand.run(args: Array(args.dropFirst()))
                 return
 
+            case "fits-timeline", "fits-video":
+                try await FITSTimelineCommand.run(args: Array(args.dropFirst()))
+                return
+
+            case "fits-composite-png", "fits-png":
+                try await FITSCompositePNGCommand.run(args: Array(args.dropFirst()))
+                return
+
+            case "fits-render-png":
+                try await FITSRenderPNGCommand.run(args: Array(args.dropFirst()))
+                return
+
+            case "fits-nircam-cosmic-cliffs", "fits-cosmic-cliffs":
+                try await FITSNIRCamCosmicCliffsCommand.run(args: Array(args.dropFirst()))
+                return
+
+            case "nebula-debug":
+                try await NebulaDebugCommand.run(args: Array(args.dropFirst()))
+                return
+
             case "probe-clip":
                 try await ProbeClipCommand.run(args: Array(args.dropFirst()))
+                return
+
+            case "gemini-analyze":
+                try await GeminiAnalyzeCommand.run(args: Array(args.dropFirst()))
+                return
+
+            case "sensors":
+                try await SensorsCommand.run(args: Array(args.dropFirst()))
+                return
+
+            case "auto-speaker-audio":
+                try await AutoSpeakerAudioCommand.run(args: Array(args.dropFirst()))
+                return
+
+            case "auto-color-correct":
+                try await AutoColorCorrectCommand.run(args: Array(args.dropFirst()))
+                return
+
+            case "auto-enhance":
+                try await AutoEnhanceCommand.run(args: Array(args.dropFirst()))
+                return
+
+            case "transcript":
+                try await TranscriptCommand.run(args: Array(args.dropFirst()))
+                return
+
+            case "diarize":
+                try await DiarizeCommand.run(args: Array(args.dropFirst()))
                 return
 
             default:
@@ -102,14 +146,21 @@ enum MetaVisLabHelp {
 
     Usage:
       MetaVisLab                       Runs the legacy lab validation flow (may invoke generators).
-      MetaVisLab assess-local --input <movie.mov> [--out <dir>] [--samples <n>] [--allow-large]
-    MetaVisLab export-demos [--out <dir>] [--allow-large]
+            MetaVisLab sensors ingest --input <movie.mov> --out <dir> [--stride <s>] [--max-video-seconds <s>] [--audio-seconds <s>] [--allow-large]
+            MetaVisLab export-demos [--out <dir>] [--allow-large]
             MetaVisLab probe-clip --input <movie.mp4> [--width <w>] [--height <h>] [--start <s>] [--end <s>] [--step <s>]
+                        MetaVisLab gemini-analyze --input <movie.mov> --out <dir>
+            MetaVisLab auto-speaker-audio --sensors <sensors.json> --out <dir> [--seed <s>] [--snippet-seconds <s>] [--input <movie.mov>] [--qa off|local-text|gemini] [--qa-cycles <n>]
+            MetaVisLab auto-color-correct --sensors <sensors.json> --out <dir> [--seed <s>] [--input <movie.mov>] [--qa off|local-text|gemini] [--qa-cycles <n>] [--qa-max-frames <n>]
+            MetaVisLab auto-enhance --sensors <sensors.json> --input <movie.mov> --out <dir> [--export <enhanced.mov>] [--export-start <seconds>] [--export-seconds <seconds>] [--seed <s>] [--qa off|local-text|gemini] [--qa-cycles <n>] [--qa-max-frames <n>] [--qa-max-audio-clips <n>] [--qa-audio-clip-seconds <s>] [--qa-max-concurrency <n>] [--height <h>] [--fps <n>] [--codec hevc|prores4444|prores422hq] [--allow-large]
+            MetaVisLab transcript generate --input <movie.mov> --out <dir> [--start-seconds <s>] [--max-seconds <s>] [--language <code>] [--write-adjacent-captions true|false] [--allow-large]
+            MetaVisLab diarize --sensors <sensors.json> --transcript <transcript.words.v1.jsonl> --out <dir>
+            MetaVisLab fits-timeline [--input-dir <dir>] [--out <dir>] [--seconds-per <s>] [--transition cut|crossfade|dip] [--transition-seconds <s>] [--easing linear|easeIn|easeOut|easeInOut] [--color gray|turbo] [--color-exposure <ev>] [--color-gamma <g>] [--height <h>] [--fps <n>] [--codec hevc|prores4444|prores422hq] [--extract-exr]
+            MetaVisLab fits-composite-png [--input-dir <dir>] [--out <dir>] [--name <file.png>] [--exposure <ev>] [--contrast <c>] [--saturation <s>] [--gamma <g>]
+            MetaVisLab fits-render-png --input <file.fits> [--out <dir>] [--name <file.png>] [--exposure <ev>] [--gamma <g>] [--alpha <a>] [--black-p <p>] [--white-p <p>]
+            MetaVisLab fits-nircam-cosmic-cliffs [--input-dir <dir>] [--out <dir>] [--name <base>] [--exposure <ev>] [--contrast <c>] [--saturation <s>] [--gamma <g>]
+            MetaVisLab nebula-debug [--out <dir>] [--width <w>] [--height <h>]
             MetaVisLab exr-timeline [--input-dir <dir>] [--out <dir>] [--seconds-per <s>] [--transition cut|crossfade|dip] [--transition-seconds <s>] [--easing linear|easeIn|easeOut|easeInOut] [--height <h>] [--fps <n>] [--codec hevc|prores4444|prores422hq] [--no-extract-exr]
-
-    assess-local (local-only):
-      Produces a reviewable pack with sampled frames, a thumbnail, a contact sheet, and local_report.json.
-      No network calls; uses deterministic QC + on-device Vision face detection.
 
         export-demos:
             Exports the built-in demo project recipes to .mov files for review.
@@ -119,6 +170,38 @@ enum MetaVisLabHelp {
             Builds a timeline from .exr stills (loaded via ffmpeg), applies a deterministic edit,
             exports a movie, and (by default) extracts one edited .exr per source still.
             If --input-dir is omitted, defaults to ./assets/exr.
+
+        fits-timeline:
+            Builds a timeline from .fits stills (loaded via the built-in FITS reader),
+            exports a movie, and writes timeline.json for inspection.
+            If --extract-exr is set, extracts one edited .exr per source still.
+            If --input-dir is omitted, defaults to ./Tests/Assets/fits.
+
+        fits-composite-png:
+            Generates a native-resolution (no upscaling) JWST-style false-color composite PNG
+            from the four MIRI bands in ./Tests/Assets/fits (f770w, f1130w, f1280w, f1800w).
+            If --input-dir is omitted, defaults to ./Tests/Assets/fits.
+            Outputs are written under ./test_outputs/_fits_composite_png by default.
+
+        fits-nircam-cosmic-cliffs:
+            Generates a native-resolution (no upscaling) 6-filter NIRCam composite PNG set
+            using percentile windowing (P0.5–P99.5) and explicit NASA hue mapping:
+                F090W→Blue, F187N→Cyan, F200W→Green, F470N→Yellow, F335M→Orange, F444W→Red.
+            Also writes required debug PNGs (per-filter contributions, star mask, ridge boundary, steam field).
+            Outputs are written under ./test_outputs/_fits_cosmic_cliffs by default.
+
+                fits-render-png:
+                        Renders a single FITS image plane to a native-resolution (no upscaling) grayscale PNG
+                        using a robust percentile-based asinh stretch.
+                        Outputs are written under ./test_outputs/_fits_render_png by default.
+
+                nebula-debug:
+                        Renders the volumetric nebula and required debug views:
+                            - blue ratio (pre/post clamp)
+                            - edge width visualization
+                            - density pre/post remap
+                            - star–medium interaction composite
+                        Outputs are written under ./test_outputs/_nebula_debug by default.
 
     Safety:
       Large assets (e.g. keith_talk.mov) require --allow-large.

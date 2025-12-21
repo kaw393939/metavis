@@ -12,23 +12,31 @@ public struct GeminiConfig: Sendable, Codable, Equatable {
     /// - `GEMINI_BASE_URL` (optional; defaults to Google Generative Language API base)
     /// - `GEMINI_MODEL` (optional)
     public static func fromEnvironment() throws -> GeminiConfig {
-        let apiKey =
+        let rawApiKey =
             getenvString("GEMINI_API_KEY") ??
             getenvString("API__GOOGLE_API_KEY") ??
             getenvString("GOOGLE_API_KEY")
+
+        // API keys should never contain whitespace; strip it defensively to avoid
+        // copy/paste issues (embedded newlines, trailing spaces, etc.).
+        let apiKey = rawApiKey?
+            .components(separatedBy: .whitespacesAndNewlines)
+            .joined()
 
         guard let apiKey, !apiKey.isEmpty else {
             throw GeminiError.misconfigured("Missing GEMINI_API_KEY (or API__GOOGLE_API_KEY)")
         }
 
-        let base = getenvString("GEMINI_BASE_URL") ?? "https://generativelanguage.googleapis.com/v1beta"
+        let base = (getenvString("GEMINI_BASE_URL") ?? "https://generativelanguage.googleapis.com/v1beta")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard let baseURL = URL(string: base) else {
             throw GeminiError.misconfigured("Invalid GEMINI_BASE_URL: \(base)")
         }
 
         // Default to a fast model; if it's not available for the configured API version,
         // GeminiClient will auto-resolve via ListModels.
-        let model = getenvString("GEMINI_MODEL") ?? "gemini-2.5-flash"
+        let model = (getenvString("GEMINI_MODEL") ?? "gemini-2.5-flash")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
 
         return GeminiConfig(apiKey: apiKey, baseURL: baseURL, model: model)
     }

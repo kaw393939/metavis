@@ -16,7 +16,7 @@ public struct EngineerAgent {
         timeline: Timeline,
         renderer: AudioTimelineRenderer,
         governance: LoudnessGovernance = .spotify
-    ) throws {
+    ) async throws {
         
         // 1. Render a "Listening Pass" (Offline, fast)
         // Render 5 seconds or full duration? full duration for MVP.
@@ -24,7 +24,7 @@ public struct EngineerAgent {
         // Ideally we scan the loudest part, but let's do start for now.
         
         print("AI Engineer: Listening to first \(diagnosisDuration)s...")
-        let buffer = try renderer.render(
+        let buffer = try await renderer.render(
             timeline: timeline,
             timeRange: Time.zero..<Time(seconds: diagnosisDuration)
         )
