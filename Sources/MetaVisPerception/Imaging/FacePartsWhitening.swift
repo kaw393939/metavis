@@ -34,7 +34,7 @@ public enum FacePartsWhitening {
         let device = facePartsDevice ?? FacePartsDevice()
         do {
             try await device.warmUp()
-            let parts = try await device.facePartsResult(in: frame)
+            let parts = try await device.infer(.init(pixelBuffer: frame))
 
             guard let mouthRect = parts.mouthRectTopLeft else {
                 return Result(

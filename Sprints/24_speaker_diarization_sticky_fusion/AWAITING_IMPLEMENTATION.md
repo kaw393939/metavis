@@ -25,6 +25,13 @@ This pivots Sprint 24 from a purely heuristic “sticky fusion” approach to an
 	- robust face/audio fusion hooks
 	- acceptance fixtures that prevent regressions
 
+## Newly available foundations (from Sprint 24a closure)
+- Governed confidence is now implemented system-wide in `MetaVisCore`:
+	- `ConfidenceRecordV1` + `ConfidenceGradeV1` + `ConfidenceSourceV1` + `ReasonCodeV1` live in `Sources/MetaVisCore/Confidence/ConfidenceRecordV1.swift`.
+	- Reasons are a finite enum and are sorted deterministically by the type.
+- Sensors ingest already emits deterministic warnings and governed reason codes (no silent degrade).
+- Face track identity is already deterministic across runs (stable `trackId` mapping derived from `(sourceKey, stableIndex)` during ingest).
+
 ## What Already Exists (in Sources)
 - Captions already support speaker tags in both formats:
 	- WebVTT: writes `<v Speaker>` and parses it back.
@@ -95,7 +102,13 @@ Every word-level speaker assignment must surface uncertainty.
 #### 3.1 Canonical Confidence model (MetaVisCore)
 Sprint 24 must not invent ad-hoc confidence.
 
-Introduce a shared, versioned confidence type in `MetaVisCore` (conceptually `ConfidenceRecord.v1`) and use it everywhere Sprint 24 emits uncertainty.
+Use the shared, versioned confidence type that now exists in `MetaVisCore` (`ConfidenceRecordV1`).
+
+Remaining doc/code work:
+- The current transcript JSONL record (`TranscriptWordV1`) does not yet carry `attributionConfidence`.
+- To meet the mandate, we should either:
+	- bump the transcript word schema (e.g. `transcript.word.v2`) to add `attributionConfidence: ConfidenceRecordV1`, or
+	- emit a separate, versioned attribution sidecar keyed by `wordId`.
 
 Required properties (conceptual; exact shape owned by `MetaVisCore`):
 - `score` (0.0–1.0)
@@ -113,7 +126,8 @@ Sprint 24 produces and consumes distinct confidence types:
 
 #### 3.3 Where confidence must surface
 As versioned, deterministic outputs:
-- `transcript.words.v1.jsonl`: each word includes `speakerId`, `speakerLabel`, and `attributionConfidence: ConfidenceRecord.v1`.
+- `transcript.words.v1.jsonl`: today includes `speakerId` and `speakerLabel`.
+- To add `attributionConfidence`, we will need a schema bump or a dedicated sidecar (see 3.1).
 - Reasons must be **closed enums** (no free-text), sorted, and stable.
 
 These fields are required inputs for Scene State (Edit Safety), automated QC, and later UI overlays.

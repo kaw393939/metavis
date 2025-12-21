@@ -27,16 +27,30 @@ public actor MobileSAMDevice {
         /// Threshold applied to mask logits/probabilities.
         public var maskThreshold: Float
 
+        /// If true, cache the most recent image encoder embedding for the last-seen input frame.
+        ///
+        /// This is intended to accelerate interactive prompting on the same frame.
+        public var enableEmbeddingCache: Bool
+
+        /// Maximum number of cached encoder embeddings when using a caller-supplied cache key.
+        ///
+        /// This keeps memory bounded for interactive workflows.
+        public var maxEmbeddingCacheEntries: Int
+
         public init(
             modelDirectory: String? = nil,
             computeUnit: AIComputeUnit = .all,
             encoderInputSize: Int = 1024,
-            maskThreshold: Float = 0.0
+            maskThreshold: Float = 0.0,
+            enableEmbeddingCache: Bool = true,
+            maxEmbeddingCacheEntries: Int = 4
         ) {
             self.modelDirectory = modelDirectory
             self.computeUnit = computeUnit
             self.encoderInputSize = encoderInputSize
             self.maskThreshold = maskThreshold
+            self.enableEmbeddingCache = enableEmbeddingCache
+            self.maxEmbeddingCacheEntries = maxEmbeddingCacheEntries
         }
     }
 
@@ -54,9 +68,11 @@ public actor MobileSAMDevice {
 
     public struct MobileSAMMetrics: Sendable, Equatable {
         public var maskCoverage: Double?
+        public var encoderReused: Bool?
 
-        public init(maskCoverage: Double?) {
+        public init(maskCoverage: Double?, encoderReused: Bool? = nil) {
             self.maskCoverage = maskCoverage
+            self.encoderReused = encoderReused
         }
     }
 
@@ -89,6 +105,12 @@ public actor MobileSAMDevice {
 
     private var cachedModelDir: String?
 
+    private var cachedImageEmbeddingPixelBufferID: ObjectIdentifier?
+    private var cachedImageEmbedding: MLMultiArray?
+
+    private var cachedEmbeddingsByKey: [String: MLMultiArray] = [:]
+    private var cachedEmbeddingKeyOrder: [String] = []
+
     private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
     public init(options: Options = Options()) {
@@ -104,6 +126,10 @@ public actor MobileSAMDevice {
         promptEncoder = nil
         maskDecoder = nil
         cachedModelDir = nil
+        cachedImageEmbeddingPixelBufferID = nil
+        cachedImageEmbedding = nil
+        cachedEmbeddingsByKey.removeAll()
+        cachedEmbeddingKeyOrder.removeAll()
     }
 
     /// Segments a single object using a point prompt.
@@ -112,6 +138,19 @@ public actor MobileSAMDevice {
     public func segment(
         pixelBuffer: CVPixelBuffer,
         prompt: PointPrompt
+    ) async -> MobileSAMResult {
+        await segment(pixelBuffer: pixelBuffer, prompt: prompt, cacheKey: nil)
+    }
+
+    /// Segments a single object using a point prompt, optionally reusing an encoder embedding.
+    ///
+    /// - Parameter cacheKey: Caller-supplied key to reuse an encoder embedding across frame copies
+    ///   (e.g. assetID+timeSeconds+keyframeIndex). When nil, falls back to single-entry reuse based
+    ///   on the `CVPixelBuffer` object identity.
+    public func segment(
+        pixelBuffer: CVPixelBuffer,
+        prompt: PointPrompt,
+        cacheKey: String?
     ) async -> MobileSAMResult {
         guard prompt.pointTopLeft.x.isFinite, prompt.pointTopLeft.y.isFinite else {
             let conf = ConfidenceRecordV1.evidence(
@@ -134,17 +173,30 @@ public actor MobileSAMDevice {
                 return MobileSAMResult(mask: nil, metrics: .init(maskCoverage: nil), evidenceConfidence: conf)
             }
 
-            // Preprocess image.
-            let inputImage = try resizeToSquareBGRA(pixelBuffer: pixelBuffer, size: options.encoderInputSize)
+            var encoderReused = false
+            let imageEmbedding: MLMultiArray
 
-            // 1) Image encoder.
-            let encInName = firstImageInputName(of: bundle.imageEncoder)
-            let encOutName = firstMultiArrayOutputName(of: bundle.imageEncoder)
-
-            let encProvider = try MLDictionaryFeatureProvider(dictionary: [encInName: MLFeatureValue(pixelBuffer: inputImage)])
-            let encOut = try await bundle.imageEncoder.prediction(from: encProvider)
-            guard let imageEmbedding = encOut.featureValue(for: encOutName)?.multiArrayValue else {
-                throw MobileSAMDeviceError.outputUnsupported
+            if options.enableEmbeddingCache, let k = cacheKey?.trimmingCharacters(in: .whitespacesAndNewlines), !k.isEmpty {
+                if let cached = cachedEmbeddingsByKey[k] {
+                    encoderReused = true
+                    imageEmbedding = cached
+                } else {
+                    let embedding = try await encodeImageEmbedding(pixelBuffer: pixelBuffer, bundle: bundle)
+                    cacheEmbedding(embedding, forKey: k)
+                    imageEmbedding = embedding
+                }
+            } else {
+                // Fall back to single-entry caching based on CVPixelBuffer identity.
+                let pbID = ObjectIdentifier(pixelBuffer as AnyObject)
+                if options.enableEmbeddingCache, cachedImageEmbeddingPixelBufferID == pbID, let cached = cachedImageEmbedding {
+                    encoderReused = true
+                    imageEmbedding = cached
+                } else {
+                    let embedding = try await encodeImageEmbedding(pixelBuffer: pixelBuffer, bundle: bundle)
+                    cachedImageEmbeddingPixelBufferID = pbID
+                    cachedImageEmbedding = embedding
+                    imageEmbedding = embedding
+                }
             }
 
             // 2) Prompt encoder (point only).
@@ -194,7 +246,7 @@ public actor MobileSAMDevice {
 
             return MobileSAMResult(
                 mask: maskPB,
-                metrics: .init(maskCoverage: coverage),
+                metrics: .init(maskCoverage: coverage, encoderReused: encoderReused),
                 evidenceConfidence: conf
             )
         } catch {
@@ -205,6 +257,36 @@ public actor MobileSAMDevice {
                 evidenceRefs: []
             )
             return MobileSAMResult(mask: nil, metrics: .init(maskCoverage: nil), evidenceConfidence: conf)
+        }
+    }
+
+    private func encodeImageEmbedding(pixelBuffer: CVPixelBuffer, bundle: ModelBundle) async throws -> MLMultiArray {
+        // Preprocess image.
+        let inputImage = try resizeToSquareBGRA(pixelBuffer: pixelBuffer, size: options.encoderInputSize)
+
+        // Image encoder.
+        let encInName = firstImageInputName(of: bundle.imageEncoder)
+        let encOutName = firstMultiArrayOutputName(of: bundle.imageEncoder)
+
+        let encProvider = try MLDictionaryFeatureProvider(dictionary: [encInName: MLFeatureValue(pixelBuffer: inputImage)])
+        let encOut = try await bundle.imageEncoder.prediction(from: encProvider)
+        guard let embedding = encOut.featureValue(for: encOutName)?.multiArrayValue else {
+            throw MobileSAMDeviceError.outputUnsupported
+        }
+        return embedding
+    }
+
+    private func cacheEmbedding(_ embedding: MLMultiArray, forKey key: String) {
+        cachedEmbeddingsByKey[key] = embedding
+
+        // Deterministic LRU-ish: keep insertion order, evict oldest.
+        cachedEmbeddingKeyOrder.removeAll(where: { $0 == key })
+        cachedEmbeddingKeyOrder.append(key)
+
+        let cap = max(1, options.maxEmbeddingCacheEntries)
+        while cachedEmbeddingKeyOrder.count > cap {
+            let evict = cachedEmbeddingKeyOrder.removeFirst()
+            cachedEmbeddingsByKey.removeValue(forKey: evict)
         }
     }
 

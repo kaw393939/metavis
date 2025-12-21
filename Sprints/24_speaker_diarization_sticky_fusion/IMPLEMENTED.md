@@ -20,7 +20,8 @@ Note: Future work is about tighter acceptance fixtures and higher-level Scene St
 The diarization backbone exists; the mandate requires we elevate it to **world-class, edit-grade** outputs by adding:
 - **Cluster lifecycle** (born/lastActive/confidence/mergeCandidates/frozen) with deterministic, explainable merges.
 - **First-class `OFFSCREEN`** semantics with contiguous spans and explicit emission on binding failure/decay.
-- **Governed confidence surfaces** at the word level using a shared `MetaVisCore` confidence record (conceptually `ConfidenceRecord.v1`) with discrete grades + finite reason codes.
+- **Governed confidence surfaces** at the word level using the shared `MetaVisCore` confidence record (`ConfidenceRecordV1`) with discrete grades + finite reason codes (`ReasonCodeV1`).
+	- Note: `TranscriptWordV1` does not yet include an attribution confidence field; meeting this requirement will require a schema bump or a dedicated sidecar keyed by `wordId`.
 - **Identity Timeline artifact** (`identity.timeline.v1.json`) as the canonical spine for identity + fusion + confidence (cluster + binding + attribution).
 
 These upgrades strengthen trust and downstream safety/QC, while keeping the existing artifacts stable and versioned.
@@ -36,6 +37,11 @@ Planned internal artifact:
 ## Tests
 - `SpeakerDiarizerContractTests` (MetaVisPerception)
 - `DiarizeCommandContractTests` (MetaVisLab)
+
+## What Sprint 24 can use today (from Sprint 24a closure)
+- A shared, governed confidence ontology (`ConfidenceRecordV1` / `ReasonCodeV1`) already used by device outputs.
+- Deterministic sensor ingest identity primitives (`trackId` remapping + stable `personId`), plus deterministic warning segments.
+- LiDAR sidecar v1 spec + reader exist (alignment/relink validation still blocked on a real Asset C capture).
 
 ## Where it lives
 - Core diarization engine: `Sources/MetaVisPerception/Diarization/...`

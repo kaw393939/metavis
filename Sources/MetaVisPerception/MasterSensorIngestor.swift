@@ -9,51 +9,6 @@ import MetaVisCore
 
 public struct MasterSensorIngestor: Sendable {
 
-    private final class SourceContentHashCache {
-        static let shared = SourceContentHashCache()
-
-        private let lock = NSLock()
-        private var cache: [String: String] = [:]
-
-        func contentHashHex(for url: URL) throws -> String {
-            let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
-            let size = (attrs[.size] as? NSNumber)?.int64Value ?? 0
-            let mtime = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-            let cacheKey = "\(url.path)|\(size)|\(mtime)"
-
-            lock.lock()
-            if let cached = cache[cacheKey] {
-                lock.unlock()
-                return cached
-            }
-            lock.unlock()
-
-            let computed = try Self.computeContentHashHex(for: url)
-
-            lock.lock()
-            cache[cacheKey] = computed
-            lock.unlock()
-
-            return computed
-        }
-
-        private static func computeContentHashHex(for url: URL) throws -> String {
-            let handle = try FileHandle(forReadingFrom: url)
-            defer { try? handle.close() }
-
-            var hasher = SHA256()
-            let chunkSize = 4 * 1024 * 1024
-            while true {
-                let data = try handle.read(upToCount: chunkSize) ?? Data()
-                if data.isEmpty { break }
-                hasher.update(data: data)
-            }
-
-            let digest = hasher.finalize()
-            return digest.map { String(format: "%02x", $0) }.joined()
-        }
-    }
-
     public struct Options: Sendable {
         /// Optional start offset into the video for analysis (seconds).
         /// Default 0 analyzes from the beginning.
@@ -122,7 +77,7 @@ public struct MasterSensorIngestor: Sendable {
         let analyzedSeconds = min(options.maxVideoSeconds, max(0.0, durationSeconds - startSeconds))
 
         // Use a content hash (not a path) so stable IDs remain stable across machines and renames.
-        let sourceKey = try SourceContentHashCache.shared.contentHashHex(for: url)
+        let sourceKey = try SourceContentHashV1.shared.contentHashHex(for: url)
 
         let videoInfo = try await readVideoInfo(asset: asset)
         let videoOut = try await readVideoSamples(asset: asset, durationSeconds: durationSeconds, sourceKey: sourceKey)
@@ -299,12 +254,13 @@ public struct MasterSensorIngestor: Sendable {
         }()
         let videoAnalyzer = VideoAnalyzer()
 
-        // Reduce first-frame latency.
+        var deviceLifecycles: [AnyPerceptionDeviceLifecycle] = []
+        deviceLifecycles.reserveCapacity(2)
         if options.enableFaces {
-            try await tracksDevice.warmUp()
+            deviceLifecycles.append(.init(tracksDevice, name: "TracksDevice"))
         }
         if options.enableSegmentation {
-            try await maskDevice.warmUp(kind: .foreground)
+            deviceLifecycles.append(.init(maskDevice, name: "MaskDevice"))
         }
 
         var samples: [MasterSensors.VideoSample] = []
@@ -328,153 +284,155 @@ public struct MasterSensorIngestor: Sendable {
         var timeIndex = 0
         var nextTime = requestedTimes[timeIndex]
 
-        while reader.status == .reading, let sb = output.copyNextSampleBuffer() {
-            let pts = CMSampleBufferGetPresentationTimeStamp(sb)
-            let t = pts.isValid ? pts.seconds : 0.0
-            if t + 0.0001 < (startSeconds + nextTime) {
-                continue
-            }
-
-            guard let pb = CMSampleBufferGetImageBuffer(sb) else { continue }
-
-            let trackRes: TracksDevice.TrackResult?
-            if options.enableFaces {
-                trackRes = try await tracksDevice.trackResult(in: pb)
-            } else {
-                trackRes = nil
-            }
-
-            let maskRes: MaskDevice.MaskResult?
-            if options.enableSegmentation {
-                let sampleT = max(0.0, min(analyzeSeconds, t - startSeconds))
-                maskRes = try await maskDevice.generateMaskResult(in: pb, kind: .foreground, timeSeconds: sampleT)
-            } else {
-                maskRes = nil
-            }
-
-            let faces: [MasterSensors.Face]
-            if options.enableFaces {
-                // Track faces (stable UUID per tracker).
-                let tracked = trackRes?.tracks ?? [:]
-                var items = tracked.map { (visionID: $0.key, rect: Self.quantizeNormalizedRect($0.value)) }
-                // Sort by geometry (deterministic) rather than Vision UUID string.
-                items.sort {
-                    if $0.rect.minX != $1.rect.minX { return $0.rect.minX < $1.rect.minX }
-                    if $0.rect.minY != $1.rect.minY { return $0.rect.minY < $1.rect.minY }
-                    let a0 = $0.rect.width * $0.rect.height
-                    let a1 = $1.rect.width * $1.rect.height
-                    if a0 != a1 { return a0 > a1 }
-                    return $0.visionID.uuidString < $1.visionID.uuidString
-                }
-
-                faces = items.map { item in
-                    let idx: Int
-                    if let existing = stableIndexByVisionID[item.visionID] {
-                        idx = existing
-                    } else {
-                        idx = nextStableIndex
-                        stableIndexByVisionID[item.visionID] = idx
-                        nextStableIndex += 1
-                    }
-                    let stableID = deterministicUUID(sourceKey: sourceKey, index: idx)
-                    // MVP identity: stable personId derived from stable index.
-                    // This intentionally does not claim cross-shot re-identification yet.
-                    return MasterSensors.Face(trackId: stableID, rect: item.rect, personId: "P\(idx)")
-                }
-            } else {
-                faces = []
-            }
-
-            let maskPresence: Double?
-            if options.enableSegmentation {
-                maskPresence = maskRes?.metrics.coverage
-            } else {
-                maskPresence = nil
-            }
-
-            // Device-level stability warnings (explicit uncertainty; never silent degrade).
-            // Keep narrow to avoid noisy warnings on clean footage.
-            let sampleT = max(0.0, min(analyzeSeconds, t - startSeconds))
-            if let mr = maskRes, mr.evidenceConfidence.reasons.contains(.mask_unstable_iou) {
-                deviceMarks.append(Mark(t: sampleT, sev: .yellow, reasons: [.mask_unstable_iou]))
-            }
-            if let tr = trackRes, tr.metrics.reacquired {
-                deviceMarks.append(Mark(t: sampleT, sev: .yellow, reasons: [.track_reacquired]))
-            }
-
-            let peopleEstimate: Int?
-            if options.enableFaces || options.enableSegmentation {
-                let faceCount = faces.count
-                if let maskPresence, maskPresence > 0.01 {
-                    peopleEstimate = max(faceCount, 1)
-                } else {
-                    peopleEstimate = faceCount
-                }
-            } else {
-                peopleEstimate = nil
-            }
-
-            let analysis = try videoAnalyzer.analyze(pixelBuffer: pb)
-            let meanLuma = meanFromHistogram(analysis.lumaHistogram)
-
-            let dom = analysis.dominantColors.map { SIMD3<Double>(Double($0.x), Double($0.y), Double($0.z)) }
-
-            let s = MasterSensors.VideoSample(
-                time: sampleT,
-                meanLuma: meanLuma,
-                skinLikelihood: Double(analysis.skinToneLikelihood),
-                dominantColors: dom,
-                faces: faces,
-                personMaskPresence: maskPresence,
-                peopleCountEstimate: peopleEstimate
-            )
-            samples.append(s)
-
-            timeIndex += 1
-            if timeIndex >= requestedTimes.count { break }
-            nextTime = requestedTimes[timeIndex]
-        }
-
-        let deviceWarnings: [MasterSensors.WarningSegment] = {
-            guard !deviceMarks.isEmpty else { return [] }
-            let sorted = deviceMarks.sorted { $0.t < $1.t }
-
-            var segments: [MasterSensors.WarningSegment] = []
-            segments.reserveCapacity(sorted.count)
-
-            var current = sorted[0]
-            var start = current.t
-
-            func flush(end: Double) {
-                let mergedReasons = Array(Set(current.reasons)).sorted()
-                if mergedReasons.isEmpty && current.sev == .green { return }
-                segments.append(
-                    MasterSensors.WarningSegment(
-                        start: start,
-                        end: max(start + 0.001, min(analyzeSeconds, end)),
-                        severity: current.sev,
-                        reasonCodes: mergedReasons
-                    )
-                )
-            }
-
-            for i in 1..<sorted.count {
-                let m = sorted[i]
-                if m.sev == current.sev {
-                    current.reasons.append(contentsOf: m.reasons)
+        return try await PerceptionDeviceGroupV1.withWarmedUp(deviceLifecycles) {
+            while reader.status == .reading, let sb = output.copyNextSampleBuffer() {
+                let pts = CMSampleBufferGetPresentationTimeStamp(sb)
+                let t = pts.isValid ? pts.seconds : 0.0
+                if t + 0.0001 < (startSeconds + nextTime) {
                     continue
                 }
-                flush(end: m.t)
-                current = m
-                start = m.t
+
+                guard let pb = CMSampleBufferGetImageBuffer(sb) else { continue }
+
+                let trackRes: TracksDevice.TrackResult?
+                if options.enableFaces {
+                    trackRes = try await tracksDevice.infer(.init(pixelBuffer: pb))
+                } else {
+                    trackRes = nil
+                }
+
+                let maskRes: MaskDevice.MaskResult?
+                if options.enableSegmentation {
+                    let sampleT = max(0.0, min(analyzeSeconds, t - startSeconds))
+                    maskRes = try await maskDevice.infer(.init(pixelBuffer: pb, kind: .foreground, timeSeconds: sampleT))
+                } else {
+                    maskRes = nil
+                }
+
+                let faces: [MasterSensors.Face]
+                if options.enableFaces {
+                    // Track faces (stable UUID per tracker).
+                    let tracked = trackRes?.tracks ?? [:]
+                    var items = tracked.map { (visionID: $0.key, rect: Self.quantizeNormalizedRect($0.value)) }
+                    // Sort by geometry (deterministic) rather than Vision UUID string.
+                    items.sort {
+                        if $0.rect.minX != $1.rect.minX { return $0.rect.minX < $1.rect.minX }
+                        if $0.rect.minY != $1.rect.minY { return $0.rect.minY < $1.rect.minY }
+                        let a0 = $0.rect.width * $0.rect.height
+                        let a1 = $1.rect.width * $1.rect.height
+                        if a0 != a1 { return a0 > a1 }
+                        return $0.visionID.uuidString < $1.visionID.uuidString
+                    }
+
+                    faces = items.map { item in
+                        let idx: Int
+                        if let existing = stableIndexByVisionID[item.visionID] {
+                            idx = existing
+                        } else {
+                            idx = nextStableIndex
+                            stableIndexByVisionID[item.visionID] = idx
+                            nextStableIndex += 1
+                        }
+                        let stableID = deterministicUUID(sourceKey: sourceKey, index: idx)
+                        // MVP identity: stable personId derived from stable index.
+                        // This intentionally does not claim cross-shot re-identification yet.
+                        return MasterSensors.Face(trackId: stableID, rect: item.rect, personId: "P\(idx)")
+                    }
+                } else {
+                    faces = []
+                }
+
+                let maskPresence: Double?
+                if options.enableSegmentation {
+                    maskPresence = maskRes?.metrics.coverage
+                } else {
+                    maskPresence = nil
+                }
+
+                // Device-level stability warnings (explicit uncertainty; never silent degrade).
+                // Keep narrow to avoid noisy warnings on clean footage.
+                let sampleT = max(0.0, min(analyzeSeconds, t - startSeconds))
+                if let mr = maskRes, mr.evidenceConfidence.reasons.contains(.mask_unstable_iou) {
+                    deviceMarks.append(Mark(t: sampleT, sev: .yellow, reasons: [.mask_unstable_iou]))
+                }
+                if let tr = trackRes, tr.metrics.reacquired {
+                    deviceMarks.append(Mark(t: sampleT, sev: .yellow, reasons: [.track_reacquired]))
+                }
+
+                let peopleEstimate: Int?
+                if options.enableFaces || options.enableSegmentation {
+                    let faceCount = faces.count
+                    if let maskPresence, maskPresence > 0.01 {
+                        peopleEstimate = max(faceCount, 1)
+                    } else {
+                        peopleEstimate = faceCount
+                    }
+                } else {
+                    peopleEstimate = nil
+                }
+
+                let analysis = try videoAnalyzer.analyze(pixelBuffer: pb)
+                let meanLuma = meanFromHistogram(analysis.lumaHistogram)
+
+                let dom = analysis.dominantColors.map { SIMD3<Double>(Double($0.x), Double($0.y), Double($0.z)) }
+
+                let s = MasterSensors.VideoSample(
+                    time: sampleT,
+                    meanLuma: meanLuma,
+                    skinLikelihood: Double(analysis.skinToneLikelihood),
+                    dominantColors: dom,
+                    faces: faces,
+                    personMaskPresence: maskPresence,
+                    peopleCountEstimate: peopleEstimate
+                )
+                samples.append(s)
+
+                timeIndex += 1
+                if timeIndex >= requestedTimes.count { break }
+                nextTime = requestedTimes[timeIndex]
             }
 
-            flush(end: (sorted.last?.t ?? 0.0) + 0.001)
-            return segments
-        }()
+            let deviceWarnings: [MasterSensors.WarningSegment] = {
+                guard !deviceMarks.isEmpty else { return [] }
+                let sorted = deviceMarks.sorted { $0.t < $1.t }
 
-        // If we undershot (e.g. reader ended early), return what we have.
-        return VideoSamplingOutput(samples: samples, deviceWarnings: deviceWarnings)
+                var segments: [MasterSensors.WarningSegment] = []
+                segments.reserveCapacity(sorted.count)
+
+                var current = sorted[0]
+                var start = current.t
+
+                func flush(end: Double) {
+                    let mergedReasons = Array(Set(current.reasons)).sorted()
+                    if mergedReasons.isEmpty && current.sev == .green { return }
+                    segments.append(
+                        MasterSensors.WarningSegment(
+                            start: start,
+                            end: max(start + 0.001, min(analyzeSeconds, end)),
+                            severity: current.sev,
+                            reasonCodes: mergedReasons
+                        )
+                    )
+                }
+
+                for i in 1..<sorted.count {
+                    let m = sorted[i]
+                    if m.sev == current.sev {
+                        current.reasons.append(contentsOf: m.reasons)
+                        continue
+                    }
+                    flush(end: m.t)
+                    current = m
+                    start = m.t
+                }
+
+                flush(end: (sorted.last?.t ?? 0.0) + 0.001)
+                return segments
+            }()
+
+            // If we undershot (e.g. reader ended early), return what we have.
+            return VideoSamplingOutput(samples: samples, deviceWarnings: deviceWarnings)
+        }
     }
 
     private func deterministicUUID(sourceKey: String, index: Int) -> UUID {

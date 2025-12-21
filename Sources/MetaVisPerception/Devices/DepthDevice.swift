@@ -103,7 +103,16 @@ public actor DepthDevice {
             reasons.append(.depth_invalid_range)
         }
         if metrics.validPixelRatio < 0.01 {
-            reasons.append(.depth_missing)
+            // Distinguish "no depth provided" from "depth provided but values look wrong".
+            if let minD = metrics.minDepthMeters, let maxD = metrics.maxDepthMeters {
+                if minD <= 0.0 || maxD > 50.0 {
+                    reasons.append(.depth_invalid_range)
+                } else {
+                    reasons.append(.depth_missing)
+                }
+            } else {
+                reasons.append(.depth_missing)
+            }
         } else {
             // Flag obviously invalid ranges.
             if let minD = metrics.minDepthMeters, minD <= 0.0 { reasons.append(.depth_invalid_range) }
@@ -151,7 +160,8 @@ public actor DepthDevice {
     }
 
     private func computeMetrics(depth: CVPixelBuffer, is16F: Bool) -> DepthMetrics {
-        // Treat non-finite, <=0, or absurdly large values as invalid.
+        // Treat non-finite values as invalid. Track observed finite min/max even if values are
+        // out of the "valid" range so callers can distinguish "missing" from "present but invalid".
         let maxReasonableMeters: Float = 50.0
 
         CVPixelBufferLockBaseAddress(depth, .readOnly)
@@ -168,8 +178,9 @@ public actor DepthDevice {
         var valid: Int64 = 0
         let total: Int64 = Int64(max(1, w * h))
 
-        var minV: Float = .infinity
-        var maxV: Float = -.infinity
+        var observedMin: Float = .infinity
+        var observedMax: Float = -.infinity
+        var finiteCount: Int64 = 0
 
         if is16F {
             for y in 0..<h {
@@ -177,11 +188,12 @@ public actor DepthDevice {
                 for x in 0..<w {
                     let f = Float(Float16(bitPattern: row[x]))
                     if !f.isFinite { continue }
-                    if f <= 0.0 { continue }
-                    if f > maxReasonableMeters { continue }
-                    valid += 1
-                    if f < minV { minV = f }
-                    if f > maxV { maxV = f }
+                    finiteCount += 1
+                    if f < observedMin { observedMin = f }
+                    if f > observedMax { observedMax = f }
+                    if f > 0.0, f <= maxReasonableMeters {
+                        valid += 1
+                    }
                 }
             }
         } else {
@@ -190,20 +202,21 @@ public actor DepthDevice {
                 for x in 0..<w {
                     let f = row[x]
                     if !f.isFinite { continue }
-                    if f <= 0.0 { continue }
-                    if f > maxReasonableMeters { continue }
-                    valid += 1
-                    if f < minV { minV = f }
-                    if f > maxV { maxV = f }
+                    finiteCount += 1
+                    if f < observedMin { observedMin = f }
+                    if f > observedMax { observedMax = f }
+                    if f > 0.0, f <= maxReasonableMeters {
+                        valid += 1
+                    }
                 }
             }
         }
 
         let ratio = Double(valid) / Double(total)
-        if valid == 0 {
+        if finiteCount == 0 {
             return DepthMetrics(validPixelRatio: ratio, minDepthMeters: nil, maxDepthMeters: nil)
         }
 
-        return DepthMetrics(validPixelRatio: ratio, minDepthMeters: Double(minV), maxDepthMeters: Double(maxV))
+        return DepthMetrics(validPixelRatio: ratio, minDepthMeters: Double(observedMin), maxDepthMeters: Double(observedMax))
     }
 }

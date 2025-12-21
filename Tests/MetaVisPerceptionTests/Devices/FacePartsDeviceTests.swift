@@ -73,6 +73,45 @@ final class FacePartsDeviceTests: XCTestCase {
                 XCTAssertGreaterThanOrEqual(r.minY, 0.0)
                 XCTAssertLessThanOrEqual(r.maxX, 1.0)
                 XCTAssertLessThanOrEqual(r.maxY, 1.0)
+
+                // Option B contract (Sprint 24a): ROI masks must be ROI-local.
+                // Any non-zero mouthMask pixels must lie within mouthRectTopLeft (top-left normalized).
+                assertMaskIsWithinRectTopLeft(mask: mouth, rectTopLeft: r, tolerancePixels: 1)
+            }
+        }
+    }
+
+    private func assertMaskIsWithinRectTopLeft(mask: CVPixelBuffer, rectTopLeft: CGRect, tolerancePixels: Int) {
+        let w = CVPixelBufferGetWidth(mask)
+        let h = CVPixelBufferGetHeight(mask)
+        let bpr = CVPixelBufferGetBytesPerRow(mask)
+
+        // Expand the rect slightly to account for polygon rasterization edge effects.
+        let tolX = max(0, tolerancePixels)
+        let tolY = max(0, tolerancePixels)
+
+        let minX = max(0, Int(floor(rectTopLeft.minX * Double(w))) - tolX)
+        let minY = max(0, Int(floor(rectTopLeft.minY * Double(h))) - tolY)
+        let maxX = min(w - 1, Int(ceil(rectTopLeft.maxX * Double(w))) - 1 + tolX)
+        let maxY = min(h - 1, Int(ceil(rectTopLeft.maxY * Double(h))) - 1 + tolY)
+
+        CVPixelBufferLockBaseAddress(mask, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(mask, .readOnly) }
+
+        guard let base = CVPixelBufferGetBaseAddress(mask) else {
+            XCTFail("Missing base address")
+            return
+        }
+
+        for y in 0..<h {
+            let row = base.advanced(by: y * bpr).assumingMemoryBound(to: UInt8.self)
+            for x in 0..<w {
+                let v = row[x]
+                if v == 0 { continue }
+                if x < minX || x > maxX || y < minY || y > maxY {
+                    XCTFail("mouthMask has non-zero pixel outside mouthRectTopLeft at (\(x),\(y)); rectPx=[\(minX),\(minY)]..[\(maxX),\(maxY)]")
+                    return
+                }
             }
         }
     }

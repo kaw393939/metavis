@@ -120,4 +120,5 @@ Edit safety is operation-specific.
 
 Related sprint docs:
 - `Sprints/24_speaker_diarization_sticky_fusion/*`
-- `Sprints/24a_upgraded_sensors/*`
+- `Sprints/24a_upgraded_sensors_done/*`
+

@@ -13,7 +13,7 @@ import MetaVisIngest
 /// - Designed for sequential/export workloads (render frame N, then N+1, ...).
 /// - Uses `AVAssetReader` with a `VideoCompositionOutput` so we can apply track transforms
 ///   and scale directly to the engine's working resolution.
-actor ClipReader {
+public actor ClipReader {
     struct Key: Hashable {
         var assetURL: String
         var timeQuantized: Int64
@@ -207,7 +207,7 @@ actor ClipReader {
 
     private let ciContext: CIContext
 
-    init(device: MTLDevice, maxCachedFrames: Int = 24) {
+    public init(device: MTLDevice, maxCachedFrames: Int = 24) {
         self.device = device
         self.maxCachedFrames = max(4, maxCachedFrames)
 
@@ -247,7 +247,7 @@ actor ClipReader {
         }
     }
 
-    func pixelBuffer(
+    public func pixelBuffer(
         assetURL: URL,
         timeSeconds: Double,
         width: Int,

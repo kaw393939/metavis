@@ -1,4 +1,5 @@
 # TDD Plan: Sprint 24a Upgraded Sensors
+**Status:** DONE (2025-12-21). Remaining LiDAR alignment tests are deferred until Asset C exists.
 
 ## Test Philosophy
 We validate "Devices" by feeding them Real Video Assets (offline) and asserting the properties of the output buffers (Coverage, Stability, Class Presence).
@@ -49,7 +50,7 @@ Note: these scripts unblock downloading/placing models; test coverage still requ
     *   Active Asset: **Asset B** or **Asset A3** (if cut/occlusion reveals instability).
     *   Action: Run a window where stability drops below threshold.
     *   Assert: emits an explicit warning artifact / metadata; never silently degrades.
-    *   Assert: downgrades `EvidenceConfidence` with reason `mask_unstable_iou` (once confidence record exists).
+    *   Assert: downgrades `EvidenceConfidence` with reason `mask_unstable_iou`.
 
 Status: Implemented.
 - `MaskDeviceTests` asserts deterministic, governed confidence and warp-based stability IoU on `keith_talk.mov`.
@@ -68,33 +69,37 @@ Status: Implemented.
     *   Assert: depth->RGB registration remains correct after proxy/full-res relink mapping.
 
 Status: Partially implemented.
-- Implemented: explicit missing semantics + governed reasons; synthetic depth buffer metrics tests.
+- Implemented: explicit missing semantics + governed reasons; synthetic depth buffer metrics tests; invalid pixel format throws; present-but-invalid-range is explicitly flagged.
 - Remaining: Asset C (real LiDAR) + alignment + relink stability tests.
 
-### 2. `FacePartsDeviceTests` (Teeth)
-*   **Unit:** `test_teeth_class_detection`
-    *   Active Asset: **Asset A** (Two Men).
-    *   Action: Feed frame known to have smiling faces.
-    *   Assert: Pixel Value `18` (Teeth) is present in the output buffer.
-    *   Assert: Pixel Value `10` (Mouth) is present.
+Note (Sprint 24a update): a minimal depth sidecar v1 format is now defined (`Sprints/24a_upgraded_sensors_done/DEPTH_SIDECAR_V1.md`) with a reference reader. Real alignment/relink remains pending until we have an Asset C capture.
 
-*   **Unit:** `test_teeth_mask_is_roi_local` (flagship)
-    *   Active Asset: **Asset A**.
-    *   Action: Compute teeth mask and face ROI from landmarks.
-    *   Assert: teeth mask has negligible coverage outside mouth ROI ("no skin bleed" invariant).
-    *   Assert: when violated, downgrades `EvidenceConfidence` with reason `teeth_outside_mouth_roi`.
 
-*   **Unit:** `test_teeth_mask_temporal_stability` (flagship)
-    *   Active Asset: **Asset A**.
-    *   Action: Evaluate N consecutive frames.
-    *   Assert: stability metric above threshold (non-flicker) or emits explicit warning.
+### 2. `FacePartsDeviceTests` (ROI-local whitening; Option B)
+*   **Unit:** `test_faceparts_emits_governed_confidence_and_roi_masks`
+    *   Active Asset: **Asset B** (Keith).
+    *   Action: Run `FacePartsDevice` across a short window.
+    *   Assert: governed confidence record shape (finite, sorted reasons).
+    *   Assert: mouth/eye ROI masks are OneComponent8 when available.
 
-Status: Landmarks-first foundation implemented; dense teeth class tests pending.
+*   **Unit:** `test_mouth_mask_pixels_are_within_mouthRectTopLeft` (flagship)
+    *   Active Asset: **Asset B** (Keith) or **Asset A2**.
+    *   Action: When `mouthMask` and `mouthRectTopLeft` are available, assert the mouth mask has no non-zero pixels outside the rect (no bleed).
+    *   Assert: when violated, downgrades `EvidenceConfidence` with an explicit governed reason code.
+
+*   **Unit:** `test_whitening_is_strictly_roi_local` (flagship)
+    *   Active Asset: **Asset B**.
+    *   Action: Run whitening using `mouthRectTopLeft`.
+    *   Assert: pixels outside ROI are unchanged.
+
+Optional (env-gated): if a face-parsing model is available, validate that derived masks (e.g., inner-mouth/lips) are produced and remain ROI-local.
+
+Status: Landmarks-first foundation implemented; dense parsing is optional and model-dependent.
 - Implemented today:
     - `FacePartsDeviceTests` validates mouth/eye ROI mask generation and emits a normalized `mouthRectTopLeft`.
     - `MouthWhiteningTests` + `FacePartsWhiteningTests` validate strict ROI-local whitening using `mouthRectTopLeft`.
 - Remaining:
-    - Add a face-parsing CoreML model and wire the class-map contract (incl. Teeth=18), then implement the teeth class presence/ROI-locality/temporal-stability tests in this section.
+    - If we adopt dense parsing for stability, freeze one compatible model format + preprocessing contract and add env-gated tests for inner-mouth/lips ROI locality + stability.
 
 ### 3. `MobileSAMDeviceTests` (Tier 1)
 *   **Unit:** `test_promptable_segmentation`
@@ -102,7 +107,15 @@ Status: Landmarks-first foundation implemented; dense teeth class tests pending.
     *   Action: Provide a "Center Point" prompt on the subject.
     *   Assert: Output mask covers the central subject (approximate bbox match).
 
-Status: Pending.
+Status: Implemented (env-gated where models are required).
+
+Implemented today:
+- Missing-model semantics are deterministic and governed (no model artifacts required).
+- Env-gated smoke test produces a non-empty mask when models are present.
+- Env-gated interactive behavior tests:
+    - Encoder embedding reuse on repeated prompts (same frame).
+    - Prompt affects mask output (non-identical masks).
+    - CacheKey-based encoder reuse across frame copies.
 
 Unblocked prerequisites:
 - CoreML MobileSAM `.mlpackage` download automation exists (see Model acquisition section above).

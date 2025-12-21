@@ -249,14 +249,22 @@ public actor FacePartsDevice {
         let leftEyeMask = try leftEyePts.map { try rasterizePolygonMaskOneComponent8(width: w, height: h, normalizedTopLeftPoints: $0) }
         let rightEyeMask = try rightEyePts.map { try rasterizePolygonMaskOneComponent8(width: w, height: h, normalizedTopLeftPoints: $0) }
 
+        // Safety clamp: enforce ROI-locality for downstream consumers.
+        // If we ever find non-zero pixels outside the computed mouth ROI (top-left space), emit a governed reason.
+        var reasons: [ReasonCodeV1] = []
+        if let rect = mouthRectTL, let mm = mouthMask {
+            let didClamp = clampMaskToRectTopLeftInPlace(mask: mm, rectTopLeft: rect, tolerancePixels: 1)
+            if didClamp {
+                reasons.append(.mouth_mask_outside_mouth_roi)
+            }
+        }
+
         let mouthCoverage = mouthMask.map { meanByteValue($0) / 255.0 }
         let leftEyeCoverage = leftEyeMask.map { meanByteValue($0) / 255.0 }
         let rightEyeCoverage = rightEyeMask.map { meanByteValue($0) / 255.0 }
 
         // Optional dense face parsing (reliability-first features).
         let parsingOutcome = await denseParsingOutcome(pixelBuffer: pixelBuffer, faceRectTopLeft: faceRectTL)
-
-        var reasons: [ReasonCodeV1] = []
 
         switch parsingOutcome {
         case .missing:
@@ -320,6 +328,43 @@ public actor FacePartsDevice {
             metrics: metrics,
             evidenceConfidence: conf
         )
+    }
+
+    private func clampMaskToRectTopLeftInPlace(
+        mask: CVPixelBuffer,
+        rectTopLeft: CGRect,
+        tolerancePixels: Int
+    ) -> Bool {
+        guard CVPixelBufferGetPixelFormatType(mask) == kCVPixelFormatType_OneComponent8 else { return false }
+
+        let w = CVPixelBufferGetWidth(mask)
+        let h = CVPixelBufferGetHeight(mask)
+        guard w > 0, h > 0 else { return false }
+
+        let tol = max(0, tolerancePixels)
+        let minX = max(0, Int(floor(rectTopLeft.minX * CGFloat(w))) - tol)
+        let maxX = min(w - 1, Int(ceil(rectTopLeft.maxX * CGFloat(w))) + tol)
+        let minY = max(0, Int(floor(rectTopLeft.minY * CGFloat(h))) - tol)
+        let maxY = min(h - 1, Int(ceil(rectTopLeft.maxY * CGFloat(h))) + tol)
+
+        CVPixelBufferLockBaseAddress(mask, [])
+        defer { CVPixelBufferUnlockBaseAddress(mask, []) }
+        guard let base = CVPixelBufferGetBaseAddress(mask) else { return false }
+        let bpr = CVPixelBufferGetBytesPerRow(mask)
+
+        var didClamp = false
+        for y in 0..<h {
+            let row = base.advanced(by: y * bpr).assumingMemoryBound(to: UInt8.self)
+            for x in 0..<w {
+                let v = row[x]
+                if v == 0 { continue }
+                if x < minX || x > maxX || y < minY || y > maxY {
+                    row[x] = 0
+                    didClamp = true
+                }
+            }
+        }
+        return didClamp
     }
 
     // MARK: - Dense face parsing (optional)
@@ -760,6 +805,11 @@ public actor FacePartsDevice {
         ) else {
             throw FacePartsDeviceError.unableToCreateMask
         }
+
+        // Our points are normalized in top-left origin space (y grows down).
+        // CoreGraphics' default user space is bottom-left origin (y grows up), so we must flip.
+        ctx.translateBy(x: 0, y: CGFloat(height))
+        ctx.scaleBy(x: 1, y: -1)
 
         ctx.setAllowsAntialiasing(false)
         ctx.setShouldAntialias(false)

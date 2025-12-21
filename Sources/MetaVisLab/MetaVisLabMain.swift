@@ -55,6 +55,10 @@ enum MetaVisLabProgram {
                 try await SensorsCommand.run(args: Array(args.dropFirst()))
                 return
 
+            case "mobilesam":
+                try await MobileSAMCommand.run(args: Array(args.dropFirst()))
+                return
+
             case "auto-speaker-audio":
                 try await AutoSpeakerAudioCommand.run(args: Array(args.dropFirst()))
                 return
@@ -147,6 +151,7 @@ enum MetaVisLabHelp {
     Usage:
       MetaVisLab                       Runs the legacy lab validation flow (may invoke generators).
             MetaVisLab sensors ingest --input <movie.mov> --out <dir> [--stride <s>] [--max-video-seconds <s>] [--audio-seconds <s>] [--allow-large]
+        MetaVisLab mobilesam segment --input <movie.mov> --time <seconds> --x <0..1> --y <0..1> --out <dir> [--width <w>] [--height <h>] [--label <0|1>] [--cache-key <k>] [--x2 <0..1> --y2 <0..1>]
             MetaVisLab export-demos [--out <dir>] [--allow-large]
             MetaVisLab probe-clip --input <movie.mp4> [--width <w>] [--height <h>] [--start <s>] [--end <s>] [--step <s>]
                         MetaVisLab gemini-analyze --input <movie.mov> --out <dir>
