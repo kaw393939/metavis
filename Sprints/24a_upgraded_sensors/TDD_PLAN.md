@@ -22,6 +22,16 @@ Mandate addition (confidence governance):
 *   **Asset C (Depth):** (TBD)
     *   *Role:* Validate `DepthDevice` (LiDAR depth sidecar alignment + confidence). This should be a short iOS LiDAR capture with a known near/far subject.
 
+## Model acquisition (new)
+Some Sprint 24a tests depend on local model artifacts. Model acquisition is now scripted and normalized into `assets/models/...`:
+
+- MobileSAM CoreML bundles:
+    - `./scripts/download_mobilesam_coreml.sh`
+- Face parsing CoreML model:
+    - `./scripts/download_face_parsing_coreml.sh`
+
+Note: these scripts unblock downloading/placing models; test coverage still requires wiring a `MobileSAMDevice` and/or dense face-parsing inference.
+
 ## Test Cases
 
 ### 1. `MaskDeviceTests` (Tier 0)
@@ -41,6 +51,10 @@ Mandate addition (confidence governance):
     *   Assert: emits an explicit warning artifact / metadata; never silently degrades.
     *   Assert: downgrades `EvidenceConfidence` with reason `mask_unstable_iou` (once confidence record exists).
 
+Status: Implemented.
+- `MaskDeviceTests` asserts deterministic, governed confidence and warp-based stability IoU on `keith_talk.mov`.
+- Cut-window robustness + explicit instability reasons are validated on `two_scene_four_speakers.mp4`.
+
 ### 1b. `DepthDeviceTests` (Tier 0)
 *   **Unit:** `test_depth_present_or_explicitly_missing`
     *   Active Asset: **Asset C**.
@@ -52,6 +66,10 @@ Mandate addition (confidence governance):
 *   **Unit:** `test_depth_alignment_is_stable_under_relink`
     *   Active Asset: **Asset C** proxy + full-res pair.
     *   Assert: depth->RGB registration remains correct after proxy/full-res relink mapping.
+
+Status: Partially implemented.
+- Implemented: explicit missing semantics + governed reasons; synthetic depth buffer metrics tests.
+- Remaining: Asset C (real LiDAR) + alignment + relink stability tests.
 
 ### 2. `FacePartsDeviceTests` (Teeth)
 *   **Unit:** `test_teeth_class_detection`
@@ -71,11 +89,23 @@ Mandate addition (confidence governance):
     *   Action: Evaluate N consecutive frames.
     *   Assert: stability metric above threshold (non-flicker) or emits explicit warning.
 
+Status: Landmarks-first foundation implemented; dense teeth class tests pending.
+- Implemented today:
+    - `FacePartsDeviceTests` validates mouth/eye ROI mask generation and emits a normalized `mouthRectTopLeft`.
+    - `MouthWhiteningTests` + `FacePartsWhiteningTests` validate strict ROI-local whitening using `mouthRectTopLeft`.
+- Remaining:
+    - Add a face-parsing CoreML model and wire the class-map contract (incl. Teeth=18), then implement the teeth class presence/ROI-locality/temporal-stability tests in this section.
+
 ### 3. `MobileSAMDeviceTests` (Tier 1)
 *   **Unit:** `test_promptable_segmentation`
     *   Active Asset: **Asset B**.
     *   Action: Provide a "Center Point" prompt on the subject.
     *   Assert: Output mask covers the central subject (approximate bbox match).
+
+Status: Pending.
+
+Unblocked prerequisites:
+- CoreML MobileSAM `.mlpackage` download automation exists (see Model acquisition section above).
 
 ## Benchmark Tests (Performance)
 *   **Unit:** `test_inference_latency_under_16ms`

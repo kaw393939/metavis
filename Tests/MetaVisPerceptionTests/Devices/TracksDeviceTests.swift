@@ -1,5 +1,7 @@
 import XCTest
 import CoreVideo
+import AVFoundation
+import MetaVisCore
 @testable import MetaVisPerception
 
 final class TracksDeviceTests: XCTestCase {

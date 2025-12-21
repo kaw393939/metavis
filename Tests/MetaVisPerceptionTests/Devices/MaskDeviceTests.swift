@@ -1,5 +1,7 @@
 import XCTest
 import CoreVideo
+import AVFoundation
+import MetaVisCore
 @testable import MetaVisPerception
 
 final class MaskDeviceTests: XCTestCase {
@@ -40,9 +42,9 @@ final class MaskDeviceTests: XCTestCase {
         XCTAssertGreaterThan(res.metrics.coverage, 0.0)
     }
 
-    func test_mask_stability_is_reasonable_without_warp() async throws {
-        // Sprint 24a calls for warp-based stability (flow). Until FlowDevice exists,
-        // validate a simpler invariance: mask coverage shouldn't fluctuate wildly frame-to-frame.
+    func test_mask_stability_is_reasonable_with_warp_iou() async throws {
+        // Sprint 24a stability contract: warp previous mask forward using optical flow and
+        // compute stabilityIoU on a downscaled grid.
         let url = URL(fileURLWithPath: "Tests/Assets/VideoEdit/keith_talk.mov")
         XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), "Missing fixture: \(url.path)")
 
@@ -52,20 +54,22 @@ final class MaskDeviceTests: XCTestCase {
         let device = MaskDevice()
         try await device.warmUp(kind: .foreground)
 
-        var means: [Double] = []
-        means.reserveCapacity(frames.count)
+        var ious: [Double] = []
+        ious.reserveCapacity(max(0, frames.count - 1))
 
         for pb in frames {
-            let mask = try await device.generateMask(in: pb, kind: .foreground)
-            means.append(meanByteValue(mask))
+            let res = try await device.generateMaskResult(in: pb, kind: .foreground)
+            if let iou = res.metrics.stabilityIoU, iou.isFinite {
+                ious.append(iou)
+            }
         }
 
-        // Stability: adjacent-frame mean should not jump massively.
-        // Threshold chosen to be robust across machines while still catching flicker.
-        for i in 1..<means.count {
-            let delta = abs(means[i] - means[i - 1])
-            XCTAssertLessThan(delta, 35.0, "Mask mean changed too much between adjacent frames: \(means[i - 1]) -> \(means[i])")
-        }
+        // First frame has no previous state; allow some nils if flow fails.
+        XCTAssertGreaterThanOrEqual(ious.count, 5, "Expected at least a few stabilityIoU samples")
+
+        // For a stable single-shot clip, IoU should be reasonably high on average.
+        let meanIoU = ious.reduce(0.0, +) / Double(max(1, ious.count))
+        XCTAssertGreaterThan(meanIoU, 0.60, "Expected mean stabilityIoU > 0.60; got \(meanIoU)")
     }
 
     func test_mask_device_cut_window_surfaces_instability_reason() async throws {

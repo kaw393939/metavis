@@ -135,4 +135,64 @@ final class MasterSensorsIngestorTests: XCTestCase {
             XCTAssertLessThanOrEqual(redSeconds / analyzedDuration, 0.20, "Too many red warnings for a clean talking-head outdoor clip")
         }
     }
+
+    func testA3CutWindowEmitsDeviceStabilityWarnings() async throws {
+        let url = URL(fileURLWithPath: "Tests/Assets/people_talking/two_scene_four_speakers.mp4")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), "Missing fixture: \(url.path)")
+
+        // Analyze a mid-clip window likely to span the scene cut.
+        let asset = AVURLAsset(url: url)
+        let duration = try await asset.load(.duration)
+        let dur = duration.seconds.isFinite ? duration.seconds : 0.0
+        let start = max(0.0, min(dur, dur * 0.45))
+
+        let ingestor = MasterSensorIngestor(
+            .init(
+                videoStartSeconds: start,
+                videoStrideSeconds: 0.50,
+                maxVideoSeconds: 8.0,
+                audioAnalyzeSeconds: 0.0,
+                enableFaces: true,
+                enableSegmentation: true,
+                enableAudio: false,
+                enableWarnings: true,
+                enableDescriptors: false,
+                enableSuggestedStart: false
+            )
+        )
+
+        let sensors = try await ingestor.ingest(url: url)
+        let reasons = sensors.warnings.flatMap { $0.governedReasonCodes }
+
+        XCTAssertTrue(
+            reasons.contains(.mask_unstable_iou) || reasons.contains(.track_reacquired),
+            "Expected mid-clip cut window to surface device stability warnings (mask_unstable_iou and/or track_reacquired). Got: \(reasons.map { $0.rawValue }.sorted())"
+        )
+    }
+
+    func testKeithTalkSegmentationKeyframesStillProducesMasks() async throws {
+        let url = URL(fileURLWithPath: "Tests/Assets/VideoEdit/keith_talk.mov")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), "Missing fixture: \(url.path)")
+
+        let ingestor = MasterSensorIngestor(
+            .init(
+                videoStrideSeconds: 0.50,
+                maxVideoSeconds: 3.0,
+                audioAnalyzeSeconds: 0.0,
+                segmentationKeyframeStrideSeconds: 1.0,
+                enableFaces: false,
+                enableSegmentation: true,
+                enableAudio: false,
+                enableWarnings: false,
+                enableDescriptors: false,
+                enableSuggestedStart: false
+            )
+        )
+
+        let sensors = try await ingestor.ingest(url: url)
+        let maskRates = sensors.videoSamples.compactMap { $0.personMaskPresence }
+
+        XCTAssertFalse(maskRates.isEmpty)
+        XCTAssertGreaterThan(maskRates.max() ?? 0.0, 0.01, "Expected some non-trivial person segmentation")
+    }
 }

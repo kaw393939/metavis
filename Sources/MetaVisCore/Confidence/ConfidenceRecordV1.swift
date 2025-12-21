@@ -120,6 +120,10 @@ public enum ReasonCodeV1: String, Codable, Sendable, Equatable, Comparable {
     case mask_low_coverage
     case flow_unstable
     case teeth_outside_mouth_roi
+    case faceparts_model_missing
+    case faceparts_infer_failed
+    case mobilesam_model_missing
+    case mobilesam_infer_failed
     case track_missing
     case track_ambiguous
 

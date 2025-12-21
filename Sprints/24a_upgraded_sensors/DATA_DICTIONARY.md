@@ -33,6 +33,27 @@ Required confidence:
 ## 2. FacePartsDevice Stream
 **Type:** `FacePartsBuffer`
 **Format:** `CVPixelBuffer` (One Component 8-bit)
+
+### Model locations (repo convention)
+When a dense face-parsing model is used, the repo follows the convention:
+- Prefer explicit configuration / env vars (e.g., `METAVIS_FACEPARTS_MODEL_PATH`).
+- Otherwise, fall back to `assets/models/face_parsing/FaceParsing.mlmodelc` or `assets/models/face_parsing/FaceParsing.mlpackage` when present.
+
+See `assets/models/README.md` for the current model inventory and download scripts.
+
+### Current shipped contract (landmarks-first)
+Today, `FacePartsDevice` is implemented using Vision face landmarks to produce conservative ROI masks and metadata:
+- `mouthRectTopLeft: CGRect` (normalized, top-left origin) suitable for ROI-local operations.
+- Optional full-frame binary ROI masks (OneComponent8, 0/255) for:
+	- `mouthMask`
+	- `leftEyeMask`
+	- `rightEyeMask`
+
+This provides a deterministic, fast on-device foundation that does not require bundling a face-parsing model.
+
+### Planned future contract (dense face parsing)
+When a face-parsing CoreML model (e.g., BiSeNetV2) is bundled and wired, the stream expands to a dense semantic label map with the mapping below.
+
 **Semantics (BiSeNetV2 Mapping):**
 | Value | Label | Notes |
 | :--- | :--- | :--- |
@@ -52,9 +73,13 @@ Required confidence:
 | 13 | Neck | |
 | 14 | Necklace | |
 | 15 | Cloth | Clothing |
-| 16 | Hair | |
-| 17 | Hat | |
-| **18** | **Teeth** | **Critical for Whitening FX** |
+| 16 | Cloth | Clothing |
+| 17 | Hair | |
+| 18 | Hat | |
+
+Important reliability note:
+- Many off-the-shelf face-parsing label sets do **not** include a dedicated “teeth” class.
+- Whitening should remain ROI-local and can be driven by landmarks + (optional) inner-mouth/lips segmentation, rather than assuming teeth pixels are available.
 
 Required metrics (deterministic):
 - `roiCoverageOutsideMouth` (teeth/mouth pixels outside mouth ROI)
@@ -62,6 +87,9 @@ Required metrics (deterministic):
 
 Required confidence:
 - `evidenceConfidence: ConfidenceRecord.v1` (reasons include `teeth_outside_mouth_roi` when violated)
+
+### Whitening FX locality (confirmed)
+Whitening is implemented as an ROI-local imaging pass (strict locality): pixels outside `mouthRectTopLeft` are preserved.
 
 ## 3. TracksDevice Stream
 **Type:** `TrackStream`

@@ -1,0 +1,75 @@
+{
+    "sprints": {
+        "01": {
+            "name": "Project Recipes",
+            "tests": [
+                "MetaVisExportTests.RecipeE2ETests"
+            ]
+        },
+        "02": {
+            "name": "Render Devices",
+            "tests": [
+                "MetaVisExportTests.RenderDeviceE2ETests"
+            ]
+        },
+        "03": {
+            "name": "Policy Bundles",
+            "tests": [
+                "MetaVisCoreTests.PolicyLibraryTests",
+                "MetaVisCoreTests.PrivacyPolicyTests"
+            ]
+        },
+        "06": {
+            "name": "QC Expansion",
+            "tests": [
+                "MetaVisExportTests.QCExpansionE2ETests"
+            ]
+        },
+        "07": {
+            "name": "AI Usage Governance",
+            "tests": [
+                "MetaVisCoreTests.AIGovernanceTests",
+                "MetaVisExportTests.AIGateIntegrationTests"
+            ]
+        },
+        "09": {
+            "name": "Audio Hardening",
+            "tests": [
+                "MetaVisAudioTests.AudioGraphTests",
+                "MetaVisExportTests.AudioNonSilenceExportTests"
+            ]
+        },
+        "14": {
+            "name": "Transitions",
+            "tests": [
+                "MetaVisExportTests.TransitionDipWipeE2ETests"
+            ]
+        },
+        "21": {
+            "name": "VFR Normalization",
+            "tests": [
+                "MetaVisExportTests.VFRNormalizationExportE2ETests",
+                "MetaVisIngestTests.VideoTimingNormalizationTests"
+            ]
+        },
+        "22": {
+            "name": "Transcript Artifact Contract",
+            "tests": [
+                "MetaVisExportTests.TranscriptSidecarContractE2ETests"
+            ]
+        },
+        "24": {
+            "name": "Speaker Diarization",
+            "tests": [
+                "MetaVisLabTests.DiarizeCommandContractTests"
+            ]
+        },
+        "24a": {
+            "name": "Upgraded Sensors",
+            "tests": [
+                "MetaVisPerceptionTests.MaskDeviceTests",
+                "MetaVisPerceptionTests.FacePartsDeviceTests"
+            ]
+        }
+    }
+}

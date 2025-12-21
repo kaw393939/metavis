@@ -55,9 +55,17 @@ public struct MasterSensorIngestor: Sendable {
     }
 
     public struct Options: Sendable {
+        /// Optional start offset into the video for analysis (seconds).
+        /// Default 0 analyzes from the beginning.
+        public var videoStartSeconds: Double
         public var videoStrideSeconds: Double
         public var maxVideoSeconds: Double
         public var audioAnalyzeSeconds: Double
+
+        /// Optional keyframe stride for segmentation (seconds).
+        /// When set, segmentation is computed on keyframes and propagated between keyframes using optical flow.
+        /// When nil, segmentation is computed on every sampled frame.
+        public var segmentationKeyframeStrideSeconds: Double?
 
         public var enableFaces: Bool
         public var enableSegmentation: Bool
@@ -67,9 +75,11 @@ public struct MasterSensorIngestor: Sendable {
         public var enableSuggestedStart: Bool
 
         public init(
+            videoStartSeconds: Double = 0.0,
             videoStrideSeconds: Double = 1.0,
             maxVideoSeconds: Double = 10.0,
             audioAnalyzeSeconds: Double = 10.0,
+            segmentationKeyframeStrideSeconds: Double? = nil,
             enableFaces: Bool = true,
             enableSegmentation: Bool = true,
             enableAudio: Bool = true,
@@ -77,9 +87,12 @@ public struct MasterSensorIngestor: Sendable {
             enableDescriptors: Bool = true,
             enableSuggestedStart: Bool = true
         ) {
+            self.videoStartSeconds = videoStartSeconds
             self.videoStrideSeconds = videoStrideSeconds
             self.maxVideoSeconds = maxVideoSeconds
             self.audioAnalyzeSeconds = audioAnalyzeSeconds
+
+            self.segmentationKeyframeStrideSeconds = segmentationKeyframeStrideSeconds
 
             self.enableFaces = enableFaces
             self.enableSegmentation = enableSegmentation
@@ -105,11 +118,15 @@ public struct MasterSensorIngestor: Sendable {
         let duration = try await asset.load(.duration)
         let durationSeconds = duration.seconds.isFinite ? duration.seconds : 0.0
 
+        let startSeconds = max(0.0, min(durationSeconds, options.videoStartSeconds))
+        let analyzedSeconds = min(options.maxVideoSeconds, max(0.0, durationSeconds - startSeconds))
+
         // Use a content hash (not a path) so stable IDs remain stable across machines and renames.
         let sourceKey = try SourceContentHashCache.shared.contentHashHex(for: url)
 
         let videoInfo = try await readVideoInfo(asset: asset)
-        let videoSamples = try await readVideoSamples(asset: asset, durationSeconds: durationSeconds, sourceKey: sourceKey)
+        let videoOut = try await readVideoSamples(asset: asset, durationSeconds: durationSeconds, sourceKey: sourceKey)
+        let videoSamples = videoOut.samples
 
         let scene = SceneContextHeuristics.inferScene(from: videoSamples)
         let audioAnalysis: AudioAnalysis
@@ -126,7 +143,6 @@ public struct MasterSensorIngestor: Sendable {
 
         let warnings: [MasterSensors.WarningSegment]
         if options.enableWarnings {
-            let analyzedSeconds = min(options.maxVideoSeconds, durationSeconds)
             let videoWarnings = EditorWarningModel.warnings(from: videoSamples)
             let audioWarnings: [MasterSensors.WarningSegment]
             if options.enableAudio {
@@ -143,7 +159,7 @@ public struct MasterSensorIngestor: Sendable {
             } else {
                 audioWarnings = []
             }
-            var combined = videoWarnings + audioWarnings
+            var combined = videoWarnings + audioWarnings + videoOut.deviceWarnings
             combined.sort {
                 if $0.start != $1.start { return $0.start < $1.start }
                 if $0.end != $1.end { return $0.end < $1.end }
@@ -154,8 +170,6 @@ public struct MasterSensorIngestor: Sendable {
         } else {
             warnings = []
         }
-
-        let analyzedSeconds = min(options.maxVideoSeconds, durationSeconds)
 
         let suggestedStart: MasterSensors.SuggestedStart?
         if options.enableSuggestedStart {
@@ -204,7 +218,7 @@ public struct MasterSensorIngestor: Sendable {
             ),
             sampling: .init(
                 videoStrideSeconds: options.videoStrideSeconds,
-                maxVideoSeconds: options.maxVideoSeconds,
+                maxVideoSeconds: analyzedSeconds,
                 audioAnalyzeSeconds: options.audioAnalyzeSeconds
             ),
             videoSamples: videoSamples,
@@ -246,12 +260,17 @@ public struct MasterSensorIngestor: Sendable {
     }
 
     private func readVideoSamples(asset: AVAsset, durationSeconds: Double) async throws -> [MasterSensors.VideoSample] {
-        return try await readVideoSamples(asset: asset, durationSeconds: durationSeconds, sourceKey: "")
+        return try await readVideoSamples(asset: asset, durationSeconds: durationSeconds, sourceKey: "").samples
     }
 
-    private func readVideoSamples(asset: AVAsset, durationSeconds: Double, sourceKey: String) async throws -> [MasterSensors.VideoSample] {
+    private struct VideoSamplingOutput: Sendable {
+        var samples: [MasterSensors.VideoSample]
+        var deviceWarnings: [MasterSensors.WarningSegment]
+    }
+
+    private func readVideoSamples(asset: AVAsset, durationSeconds: Double, sourceKey: String) async throws -> VideoSamplingOutput {
         let tracks = try await asset.loadTracks(withMediaType: .video)
-        guard let track = tracks.first else { return [] }
+        guard let track = tracks.first else { return VideoSamplingOutput(samples: [], deviceWarnings: []) }
 
         let reader = try AVAssetReader(asset: asset)
         let outputSettings: [String: Any] = [
@@ -259,31 +278,46 @@ public struct MasterSensorIngestor: Sendable {
         ]
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: outputSettings)
         output.alwaysCopiesSampleData = false
-        guard reader.canAdd(output) else { return [] }
+        guard reader.canAdd(output) else { return VideoSamplingOutput(samples: [], deviceWarnings: []) }
         reader.add(output)
 
-        let analyzeSeconds = min(options.maxVideoSeconds, max(0.0, durationSeconds))
-        if analyzeSeconds <= 0.0001 { return [] }
+        let startSeconds = max(0.0, min(durationSeconds, options.videoStartSeconds))
+        let analyzeSeconds = min(options.maxVideoSeconds, max(0.0, durationSeconds - startSeconds))
+        if analyzeSeconds <= 0.0001 { return VideoSamplingOutput(samples: [], deviceWarnings: []) }
 
         let stride = max(0.25, options.videoStrideSeconds)
         let requestedTimes: [Double] = strideTimes(maxSeconds: analyzeSeconds, stride: stride)
 
-        guard reader.startReading() else { return [] }
+        guard reader.startReading() else { return VideoSamplingOutput(samples: [], deviceWarnings: []) }
 
-        let faceService = FaceDetectionService()
+        let tracksDevice = TracksDevice()
+        let maskDevice: MaskDevice = {
+            if let stride = options.segmentationKeyframeStrideSeconds, stride.isFinite, stride > 0.0001 {
+                return MaskDevice(options: .init(mode: .keyframes(strideSeconds: stride)))
+            }
+            return MaskDevice()
+        }()
         let videoAnalyzer = VideoAnalyzer()
-        let segmentationService = PersonSegmentationService()
 
         // Reduce first-frame latency.
         if options.enableFaces {
-            try await faceService.warmUp()
+            try await tracksDevice.warmUp()
         }
         if options.enableSegmentation {
-            try await segmentationService.warmUp()
+            try await maskDevice.warmUp(kind: .foreground)
         }
 
         var samples: [MasterSensors.VideoSample] = []
         samples.reserveCapacity(requestedTimes.count)
+
+        struct Mark {
+            var t: Double
+            var sev: MasterSensors.TrafficLight
+            var reasons: [ReasonCodeV1]
+        }
+
+        var deviceMarks: [Mark] = []
+        deviceMarks.reserveCapacity(requestedTimes.count)
 
         // Deterministic mapping: Vision UUIDs are not guaranteed stable across runs.
         // We assign stable per-run indices based on sorted rect order at first sight,
@@ -297,16 +331,31 @@ public struct MasterSensorIngestor: Sendable {
         while reader.status == .reading, let sb = output.copyNextSampleBuffer() {
             let pts = CMSampleBufferGetPresentationTimeStamp(sb)
             let t = pts.isValid ? pts.seconds : 0.0
-            if t + 0.0001 < nextTime {
+            if t + 0.0001 < (startSeconds + nextTime) {
                 continue
             }
 
             guard let pb = CMSampleBufferGetImageBuffer(sb) else { continue }
 
+            let trackRes: TracksDevice.TrackResult?
+            if options.enableFaces {
+                trackRes = try await tracksDevice.trackResult(in: pb)
+            } else {
+                trackRes = nil
+            }
+
+            let maskRes: MaskDevice.MaskResult?
+            if options.enableSegmentation {
+                let sampleT = max(0.0, min(analyzeSeconds, t - startSeconds))
+                maskRes = try await maskDevice.generateMaskResult(in: pb, kind: .foreground, timeSeconds: sampleT)
+            } else {
+                maskRes = nil
+            }
+
             let faces: [MasterSensors.Face]
             if options.enableFaces {
                 // Track faces (stable UUID per tracker).
-                let tracked = try await faceService.trackFaces(in: pb)
+                let tracked = trackRes?.tracks ?? [:]
                 var items = tracked.map { (visionID: $0.key, rect: Self.quantizeNormalizedRect($0.value)) }
                 // Sort by geometry (deterministic) rather than Vision UUID string.
                 items.sort {
@@ -338,11 +387,19 @@ public struct MasterSensorIngestor: Sendable {
 
             let maskPresence: Double?
             if options.enableSegmentation {
-                // Person segmentation presence (sample at the same stride for now; can be decimated later).
-                let maskPB = try await segmentationService.generateMask(in: pb)
-                maskPresence = maskPB.flatMap { Self.maskPresenceRatio(pixelBuffer: $0) }
+                maskPresence = maskRes?.metrics.coverage
             } else {
                 maskPresence = nil
+            }
+
+            // Device-level stability warnings (explicit uncertainty; never silent degrade).
+            // Keep narrow to avoid noisy warnings on clean footage.
+            let sampleT = max(0.0, min(analyzeSeconds, t - startSeconds))
+            if let mr = maskRes, mr.evidenceConfidence.reasons.contains(.mask_unstable_iou) {
+                deviceMarks.append(Mark(t: sampleT, sev: .yellow, reasons: [.mask_unstable_iou]))
+            }
+            if let tr = trackRes, tr.metrics.reacquired {
+                deviceMarks.append(Mark(t: sampleT, sev: .yellow, reasons: [.track_reacquired]))
             }
 
             let peopleEstimate: Int?
@@ -363,7 +420,7 @@ public struct MasterSensorIngestor: Sendable {
             let dom = analysis.dominantColors.map { SIMD3<Double>(Double($0.x), Double($0.y), Double($0.z)) }
 
             let s = MasterSensors.VideoSample(
-                time: t,
+                time: sampleT,
                 meanLuma: meanLuma,
                 skinLikelihood: Double(analysis.skinToneLikelihood),
                 dominantColors: dom,
@@ -378,8 +435,46 @@ public struct MasterSensorIngestor: Sendable {
             nextTime = requestedTimes[timeIndex]
         }
 
+        let deviceWarnings: [MasterSensors.WarningSegment] = {
+            guard !deviceMarks.isEmpty else { return [] }
+            let sorted = deviceMarks.sorted { $0.t < $1.t }
+
+            var segments: [MasterSensors.WarningSegment] = []
+            segments.reserveCapacity(sorted.count)
+
+            var current = sorted[0]
+            var start = current.t
+
+            func flush(end: Double) {
+                let mergedReasons = Array(Set(current.reasons)).sorted()
+                if mergedReasons.isEmpty && current.sev == .green { return }
+                segments.append(
+                    MasterSensors.WarningSegment(
+                        start: start,
+                        end: max(start + 0.001, min(analyzeSeconds, end)),
+                        severity: current.sev,
+                        reasonCodes: mergedReasons
+                    )
+                )
+            }
+
+            for i in 1..<sorted.count {
+                let m = sorted[i]
+                if m.sev == current.sev {
+                    current.reasons.append(contentsOf: m.reasons)
+                    continue
+                }
+                flush(end: m.t)
+                current = m
+                start = m.t
+            }
+
+            flush(end: (sorted.last?.t ?? 0.0) + 0.001)
+            return segments
+        }()
+
         // If we undershot (e.g. reader ended early), return what we have.
-        return samples
+        return VideoSamplingOutput(samples: samples, deviceWarnings: deviceWarnings)
     }
 
     private func deterministicUUID(sourceKey: String, index: Int) -> UUID {
