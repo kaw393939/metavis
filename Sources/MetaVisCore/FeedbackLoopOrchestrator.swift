@@ -99,10 +99,10 @@ public enum FeedbackLoopOrchestrator {
 
     public static func run<Proposal: Sendable & Codable>(
         options: Options,
-        hooks: Hooks<Proposal>
+        hooks: Hooks<Proposal>,
+        fileSystem: any FileSystemAdapter = DiskFileSystemAdapter()
     ) async throws -> Result<Proposal> {
-        let fm = FileManager.default
-        try fm.createDirectory(at: options.outputDirURL, withIntermediateDirectories: true)
+        try fileSystem.createDirectory(at: options.outputDirURL, withIntermediateDirectories: true)
 
         let cycles = options.qaEnabled ? max(0, options.qaCycles) : 0
         let totalCycles = max(1, options.qaEnabled ? max(1, cycles) : 1)
@@ -113,7 +113,7 @@ public enum FeedbackLoopOrchestrator {
 
         for cycleIndex in 0..<totalCycles {
             let cycleDir = options.outputDirURL.appendingPathComponent("cycle_\(cycleIndex)", isDirectory: true)
-            try fm.createDirectory(at: cycleDir, withIntermediateDirectories: true)
+            try fileSystem.createDirectory(at: cycleDir, withIntermediateDirectories: true)
 
             var evidence = hooks.buildEvidence(cycleIndex, nil)
 
@@ -121,8 +121,8 @@ public enum FeedbackLoopOrchestrator {
                 try await extractor(evidence, inputMovieURL, options.outputDirURL, options.qaMaxConcurrency)
             }
 
-            try JSONWriting.write(currentProposal, to: cycleDir.appendingPathComponent(hooks.proposalFileName))
-            try JSONWriting.write(evidence, to: cycleDir.appendingPathComponent("evidence_pack.json"))
+            try fileSystem.write(JSONWriting.encode(currentProposal), to: cycleDir.appendingPathComponent(hooks.proposalFileName))
+            try fileSystem.write(JSONWriting.encode(evidence), to: cycleDir.appendingPathComponent("evidence_pack.json"))
 
             var acceptance: AcceptanceReport
             if options.qaEnabled {
@@ -130,16 +130,20 @@ public enum FeedbackLoopOrchestrator {
                 acceptance = qa1.report
 
                 if let prompt = qa1.prompt {
-                    try prompt.data(using: .utf8)?.write(to: cycleDir.appendingPathComponent("qa_prompt.txt"))
+                    if let data = prompt.data(using: .utf8) {
+                        try fileSystem.write(data, to: cycleDir.appendingPathComponent("qa_prompt.txt"))
+                    }
                 }
                 if let raw = qa1.rawResponse {
-                    try raw.data(using: .utf8)?.write(to: cycleDir.appendingPathComponent("qa_response_raw.txt"))
+                    if let data = raw.data(using: .utf8) {
+                        try fileSystem.write(data, to: cycleDir.appendingPathComponent("qa_response_raw.txt"))
+                    }
                 }
             } else {
                 acceptance = hooks.qaOffAcceptance
             }
 
-            try JSONWriting.write(acceptance, to: cycleDir.appendingPathComponent("acceptance_report.json"))
+            try fileSystem.write(JSONWriting.encode(acceptance), to: cycleDir.appendingPathComponent("acceptance_report.json"))
 
             // Escalation ladder: budgeted + targeted evidence only. If QA requests escalation, rebuild evidence and re-run QA once.
             if options.qaEnabled,
@@ -147,7 +151,7 @@ public enum FeedbackLoopOrchestrator {
                let esc = acceptance.requestedEvidenceEscalation,
                (esc.extendOneAudioClipToSeconds != nil || (esc.addFramesAtSeconds?.isEmpty == false)) {
                 let escDir = cycleDir.appendingPathComponent("escalation_0", isDirectory: true)
-                try fm.createDirectory(at: escDir, withIntermediateDirectories: true)
+                try fileSystem.createDirectory(at: escDir, withIntermediateDirectories: true)
 
                 let escalated = hooks.buildEvidence(cycleIndex, esc)
 
@@ -155,22 +159,26 @@ public enum FeedbackLoopOrchestrator {
                     try await extractor(escalated, inputMovieURL, options.outputDirURL, options.qaMaxConcurrency)
                 }
 
-                try JSONWriting.write(escalated, to: escDir.appendingPathComponent("evidence_pack.json"))
+                try fileSystem.write(JSONWriting.encode(escalated), to: escDir.appendingPathComponent("evidence_pack.json"))
 
                 let qa2 = try await hooks.runQA(currentProposal, escalated)
                 if let prompt = qa2.prompt {
-                    try prompt.data(using: .utf8)?.write(to: escDir.appendingPathComponent("qa_prompt.txt"))
+                    if let data = prompt.data(using: .utf8) {
+                        try fileSystem.write(data, to: escDir.appendingPathComponent("qa_prompt.txt"))
+                    }
                 }
                 if let raw = qa2.rawResponse {
-                    try raw.data(using: .utf8)?.write(to: escDir.appendingPathComponent("qa_response_raw.txt"))
+                    if let data = raw.data(using: .utf8) {
+                        try fileSystem.write(data, to: escDir.appendingPathComponent("qa_response_raw.txt"))
+                    }
                 }
                 let acceptance2 = qa2.report
-                try JSONWriting.write(acceptance2, to: escDir.appendingPathComponent("acceptance_report.json"))
+                try fileSystem.write(JSONWriting.encode(acceptance2), to: escDir.appendingPathComponent("acceptance_report.json"))
 
                 // Promote post-escalation artifacts.
                 evidence = escalated
                 acceptance = acceptance2
-                try JSONWriting.write(acceptance2, to: cycleDir.appendingPathComponent("acceptance_report.json"))
+                try fileSystem.write(JSONWriting.encode(acceptance2), to: cycleDir.appendingPathComponent("acceptance_report.json"))
             }
 
             finalEvidence = evidence
@@ -184,11 +192,11 @@ public enum FeedbackLoopOrchestrator {
         }
 
         // Write final canonical artifacts at the root for easy consumption.
-        try JSONWriting.write(currentProposal, to: options.outputDirURL.appendingPathComponent(hooks.proposalFileName))
+        try fileSystem.write(JSONWriting.encode(currentProposal), to: options.outputDirURL.appendingPathComponent(hooks.proposalFileName))
         if let finalEvidence {
-            try JSONWriting.write(finalEvidence, to: options.outputDirURL.appendingPathComponent("evidence_pack.json"))
+            try fileSystem.write(JSONWriting.encode(finalEvidence), to: options.outputDirURL.appendingPathComponent("evidence_pack.json"))
         }
-        try JSONWriting.write(finalAcceptance, to: options.outputDirURL.appendingPathComponent("acceptance_report.json"))
+        try fileSystem.write(JSONWriting.encode(finalAcceptance), to: options.outputDirURL.appendingPathComponent("acceptance_report.json"))
 
         return Result(proposal: currentProposal, finalEvidence: finalEvidence, finalAcceptance: finalAcceptance)
     }

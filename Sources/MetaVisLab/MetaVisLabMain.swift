@@ -48,7 +48,7 @@ enum MetaVisLabProgram {
                 return
 
             case "gemini-analyze":
-                try await GeminiAnalyzeCommand.run(args: Array(args.dropFirst()))
+                try await GeminiAnalyzeCommand.run(args: Array(args.dropFirst()), io: .default())
                 return
 
             case "sensors":

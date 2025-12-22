@@ -8,23 +8,27 @@ public final class EntitlementManager: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.metavis.entitlements")
 
     private var _currentPlan: UserPlan
+    private let unlockVerifier: @Sendable (String) -> UserPlan?
 
     /// The current active plan for this session/app instance.
     public var currentPlan: UserPlan {
         queue.sync { _currentPlan }
     }
     
-    public init(initialPlan: UserPlan = .free) {
+    public init(
+        initialPlan: UserPlan = .free,
+        unlockVerifier: @escaping @Sendable (String) -> UserPlan? = { _ in nil }
+    ) {
         self._currentPlan = initialPlan
+        self.unlockVerifier = unlockVerifier
     }
     
     /// Attempt to upgrade the plan using an Unlock Code.
     /// In a real app, this would verify a cryptographic signature.
     public func applyUnlockCode(_ code: String) -> Bool {
-        // Mock Verification
-        if code == "UNLOCK_PRO_2025" {
+        if let plan = unlockVerifier(code) {
             queue.sync {
-                _currentPlan = .pro
+                _currentPlan = plan
             }
             return true
         }

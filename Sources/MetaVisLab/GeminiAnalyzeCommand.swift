@@ -1,10 +1,13 @@
 import Foundation
 import AVFoundation
 import MetaVisCore
+import MetaVisTimeline
+import MetaVisExport
+import MetaVisSimulation
 import MetaVisQC
 
 enum GeminiAnalyzeCommand {
-    static func run(args: [String]) async throws {
+    static func run(args: [String], io: IOContext = .default()) async throws {
         var inputPath: String?
         var outDir: String?
 
@@ -46,6 +49,8 @@ enum GeminiAnalyzeCommand {
         let inputURL = URL(fileURLWithPath: inputPath)
         let outURL = URL(fileURLWithPath: outDir)
 
+        try io.prepare()
+
         try FileManager.default.createDirectory(at: outURL, withIntermediateDirectories: true)
 
         // Governance: treat input as a deliverable unless explicitly loosened elsewhere.
@@ -53,7 +58,7 @@ enum GeminiAnalyzeCommand {
         let privacy = PrivacyPolicy(allowRawMediaUpload: false, allowDeliverablesUpload: true)
         let usage = GeminiQC.UsageContext(policy: policy, privacy: privacy)
 
-        let proxyURL = try ensureInlineVideoUnderLimit(inputURL: inputURL, outDir: outURL, maxBytes: policy.maxInlineBytes)
+        let proxyURL = try await ensureInlineVideoUnderLimit(inputURL: inputURL, outDir: outURL, maxBytes: policy.maxInlineBytes)
 
         let duration = await probeDurationSeconds(url: proxyURL)
         let keyFrames = buildDefaultKeyFrames(durationSeconds: duration)
@@ -139,51 +144,90 @@ enum GeminiAnalyzeCommand {
         return String(text[start...end])
     }
 
-    private static func ensureInlineVideoUnderLimit(inputURL: URL, outDir: URL, maxBytes: Int) throws -> URL {
+    private static func ensureInlineVideoUnderLimit(inputURL: URL, outDir: URL, maxBytes: Int) async throws -> URL {
         let dataSize = (try? FileManager.default.attributesOfItem(atPath: inputURL.path)[.size] as? NSNumber)?.intValue ?? 0
         if dataSize > 0 && dataSize <= maxBytes {
             return inputURL
         }
 
-        // Create a small proxy (~360p, low bitrate) to fit inside inline limits.
+        print("gemini-analyze: proxying video to fit inline limit (maxInlineBytes=\(maxBytes))")
+
+        // Create a small proxy (~60s, ~360p, low bitrate) to fit inside inline limits.
+        // This path must not rely on external binaries.
         let proxyURL = outDir.appendingPathComponent("gemini_proxy_360p_60s.mp4")
 
-        let args: [String] = [
-            "ffmpeg",
-            "-y",
-            "-i", inputURL.path,
-            "-t", "60",
-            "-vf", "scale='min(640,iw)':-2",
-            "-c:v", "libx264",
-            "-profile:v", "baseline",
-            "-level", "3.0",
-            "-pix_fmt", "yuv420p",
-            "-b:v", "900k",
-            "-maxrate", "1200k",
-            "-bufsize", "2400k",
-            "-c:a", "aac",
-            "-b:a", "96k",
-            "-ac", "2",
-            "-movflags", "+faststart",
-            proxyURL.path
+        let asset = AVURLAsset(url: inputURL)
+        var durationSeconds: Double = 60.0
+        do {
+            let d = try await asset.load(.duration)
+            durationSeconds = max(0.0, d.isNumeric ? d.seconds : 0.0)
+        } catch {
+            durationSeconds = 60.0
+        }
+        let exportSeconds = max(0.5, min(60.0, durationSeconds > 0 ? durationSeconds : 60.0))
+
+        let assetRef = AssetReference(sourceFn: inputURL.absoluteString)
+        let clipDuration = Time(seconds: exportSeconds)
+        let clip = Clip(name: "Proxy", asset: assetRef, startTime: .zero, duration: clipDuration, offset: .zero)
+
+        // Include both video + audio so Gemini can evaluate speech/quality when available.
+        let timeline = Timeline(
+            tracks: [
+                Track(name: "Video", kind: .video, clips: [clip]),
+                Track(name: "Audio", kind: .audio, clips: [clip])
+            ],
+            duration: clipDuration
+        )
+
+        // Export using engine pipeline.
+        let engine = try MetalSimulationEngine()
+        try await engine.configure()
+
+        let trace = StdoutTraceSink()
+        let exporter = VideoExporter(engine: engine, trace: trace)
+
+        // Try a few increasingly aggressive settings to fit the inline budget.
+        let attempts: [(height: Int, videoBitrate: Int, audioBitrate: Int)] = [
+            (360, 900_000, 96_000),
+            (360, 600_000, 64_000),
+            (240, 450_000, 48_000)
         ]
 
-        print("gemini-analyze: proxying video to fit inline limit (maxInlineBytes=\(maxBytes))")
-        try runProcess("/usr/bin/env", args)
+        for (idx, a) in attempts.enumerated() {
+            let quality = QualityProfile(name: "GeminiProxy\(a.height)", fidelity: .draft, resolutionHeight: a.height, colorDepth: 8)
+            let encoding = EncodingProfile.proxy(frameRate: 24, maxVideoBitRate: a.videoBitrate, audioBitRate: a.audioBitrate)
+
+            // Ensure we're not appending to a previous attempt.
+            if FileManager.default.fileExists(atPath: proxyURL.path) {
+                try? FileManager.default.removeItem(at: proxyURL)
+            }
+
+            try await exporter.export(
+                timeline: timeline,
+                to: proxyURL,
+                quality: quality,
+                frameRate: 24,
+                codec: .hevc,
+                encodingProfile: encoding,
+                audioPolicy: .auto,
+                governance: .none
+            )
+
+            let proxySize = (try? FileManager.default.attributesOfItem(atPath: proxyURL.path)[.size] as? NSNumber)?.intValue ?? 0
+            if proxySize > 0 && proxySize <= maxBytes {
+                if idx > 0 {
+                    print("gemini-analyze: proxy fit budget after \(idx + 1) attempts (bytes=\(proxySize))")
+                }
+                return proxyURL
+            }
+        }
 
         let proxySize = (try? FileManager.default.attributesOfItem(atPath: proxyURL.path)[.size] as? NSNumber)?.intValue ?? 0
-        if proxySize <= 0 {
-            throw NSError(domain: "MetaVisLab", code: 10, userInfo: [NSLocalizedDescriptionKey: "Failed to create proxy video"])
-        }
-        if proxySize > maxBytes {
-            throw NSError(
-                domain: "MetaVisLab",
-                code: 11,
-                userInfo: [NSLocalizedDescriptionKey: "Proxy video is still too large for inline upload (\(proxySize) bytes > \(maxBytes)). Lower bitrate further or implement file-URI upload."]
-            )
-        }
-
-        return proxyURL
+        throw NSError(
+            domain: "MetaVisLab",
+            code: 11,
+            userInfo: [NSLocalizedDescriptionKey: "Proxy video is still too large for inline upload (\(proxySize) bytes > \(maxBytes)). Reduce the budget, implement chunked upload, or add a more aggressive proxy profile."]
+        )
     }
 
     private static func probeDurationSeconds(url: URL) async -> Double {
@@ -212,29 +256,6 @@ enum GeminiAnalyzeCommand {
         ]
 
         return times.map { GeminiQC.KeyFrame(timeSeconds: min($0.0, safeEnd), label: $0.1) }
-    }
-
-    private static func runProcess(_ executable: String, _ args: [String]) throws {
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: executable)
-        proc.arguments = args
-
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = pipe
-
-        try proc.run()
-        proc.waitUntilExit()
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        if !data.isEmpty, let text = String(data: data, encoding: .utf8) {
-            // ffmpeg writes progress to stderr; forward it for debugging.
-            print(text)
-        }
-
-        if proc.terminationStatus != 0 {
-            throw NSError(domain: "MetaVisLab", code: 12, userInfo: [NSLocalizedDescriptionKey: "Process failed: \(args.prefix(1).joined()) (status=\(proc.terminationStatus))"])
-        }
     }
 
     private static let help = """

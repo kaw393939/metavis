@@ -1,5 +1,25 @@
 import Foundation
 
+public enum IntentParserError: Error, LocalizedError, Sendable {
+    case missingJSON
+    case invalidUTF8
+    case decodeFailed(String)
+    case invalidIntent(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .missingJSON:
+            return "LLM response did not contain a JSON object"
+        case .invalidUTF8:
+            return "Failed to decode intent JSON as UTF-8"
+        case .decodeFailed(let msg):
+            return "Failed to decode intent JSON: \(msg)"
+        case .invalidIntent(let msg):
+            return "Intent failed validation: \(msg)"
+        }
+    }
+}
+
 /// Parses raw text from the LLM into structured UserIntents.
 public struct IntentParser {
     
@@ -21,6 +41,36 @@ public struct IntentParser {
             print("Intent Parsing Failed: \(error)")
             // Fallback strategy could go here
             return nil
+        }
+    }
+
+    /// Strict parsing for production intent application.
+    ///
+    /// - Returns: `nil` if the response contains no JSON at all.
+    /// - Throws: `IntentParserError` if JSON exists but is invalid or fails validation.
+    public func parseValidated(response: String) throws -> UserIntent? {
+        guard let jsonString = extractJSON(from: response) else { return nil }
+        guard let data = jsonString.data(using: .utf8) else { throw IntentParserError.invalidUTF8 }
+
+        let intent: UserIntent
+        do {
+            intent = try JSONDecoder().decode(UserIntent.self, from: data)
+        } catch {
+            throw IntentParserError.decodeFailed(String(describing: error))
+        }
+
+        try validate(intent)
+        return intent
+    }
+
+    private func validate(_ intent: UserIntent) throws {
+        if intent.action == .unknown {
+            throw IntentParserError.invalidIntent("action=unknown")
+        }
+        for (k, v) in intent.params {
+            if !v.isFinite {
+                throw IntentParserError.invalidIntent("param \(k) is not finite")
+            }
         }
     }
     

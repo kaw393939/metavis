@@ -1,6 +1,7 @@
 import Foundation
 import Metal
 import CoreVideo
+import os
 import MetaVisCore
 import MetaVisGraphics // For Bundle access (if public) or Resource lookup
 import MetaVisPerception
@@ -8,6 +9,8 @@ import simd
 
 /// The Production Renderer. executes the RenderRequest on the GPU.
 public actor MetalSimulationEngine: SimulationEngineProtocol {
+
+    private nonisolated static let logger = Logger(subsystem: "com.metavis.simulation", category: "MetalSimulationEngine")
     
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
@@ -24,13 +27,19 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
 
     private var renderWarnings: [String] = []
 
-    private func compileLibraryFromHardcodedSources(files: [String]) async throws -> MTLLibrary? {
+    public enum EngineMode: Sendable, Equatable {
+        case development
+        case production
+    }
+
+    private let mode: EngineMode
+
+    private func compileLibraryFromBundledMetalSources(files: [String], bundle: Bundle) async throws -> MTLLibrary? {
         var source = "#include <metal_stdlib>\nusing namespace metal;\n"
 
         for file in files {
-            // Direct Hardcoded Fallback for Tests / Development
-            let path = "/Users/kwilliams/Projects/metavis_render_two/metaviskit2/Sources/MetaVisGraphics/Resources/\(file).metal"
-            if let content = try? String(contentsOfFile: path) {
+            let url = bundle.url(forResource: file, withExtension: "metal")
+            if let url, let content = try? String(contentsOf: url) {
                 // Strip ALL include directives by filtering lines.
                 // We concatenate dependencies explicitly via `files` ordering.
                 let lines = content.components(separatedBy: .newlines)
@@ -39,10 +48,10 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
                     return !trimmed.hasPrefix("#include") && trimmed != "using namespace metal;"
                 }
                 let c = filtered.joined(separator: "\n")
-                source += "\n// File: \(file).metal (Hardcoded)\n" + c + "\n"
-                logDebug("✅ Loaded \(file).metal from Source Path")
+                source += "\n// File: \(file).metal (Bundle)\n" + c + "\n"
+                logDebug("✅ Loaded \(file).metal from Bundle")
             } else {
-                logDebug("⚠️ \(file).metal source not found at path: \(path)")
+                logDebug("⚠️ \(file).metal source not found in bundle")
             }
         }
 
@@ -69,24 +78,17 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
     }
     
     private nonisolated func logDebug(_ msg: String) {
-        let str = "\(Date()): [Engine] \(msg)\n"
-        if let data = str.data(using: .utf8) {
-            let url = URL(fileURLWithPath: "/tmp/metavis_engine_debug.log")
-            if let handle = try? FileHandle(forWritingTo: url) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                try? handle.close()
-            } else {
-                try? str.write(to: url, atomically: true, encoding: .utf8)
-            }
-        }
+        // Avoid nondeterministic side effects by default; opt-in with env var.
+        guard ProcessInfo.processInfo.environment["METAVIS_ENGINE_DEBUG_LOG"] == "1" else { return }
+        Self.logger.debug("[Engine] \(msg, privacy: .public)")
     }
 
-    public init() throws {
+    public init(mode: EngineMode = .development) throws {
         guard let device = MTLCreateSystemDefaultDevice() else {
             throw RuntimeError("Metal is not supported on this device.")
         }
         self.device = device
+        self.mode = mode
         
         guard let queue = device.makeCommandQueue() else {
             throw RuntimeError("Failed to create Command Queue.")
@@ -122,10 +124,13 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
                  self.library = try device.makeDefaultLibrary(bundle: GraphicsBundleHelper.bundle)
                  logDebug("✅ Loaded Library from Helper Bundle")
              } catch {
-                 logDebug("⚠️ Helper Bundle Load Failed: \(error). Attempting Runtime Compilation...")
+                                 if mode == .production {
+                                         throw error
+                                 }
+                                 logDebug("⚠️ Helper Bundle Load Failed: \(error). Attempting Runtime Compilation...")
 
                  // Fallback: Runtime Compilation (concatenate a minimal set for tests)
-                 self.library = try await compileLibraryFromHardcodedSources(files: [
+                                 self.library = try await compileLibraryFromBundledMetalSources(files: [
                           "ClearColor",        // Solid fills (empty timeline fallback)
                     "ColorSpace",         // IDT/ODT transforms
                           "ACES",               // Shared ACES helpers (ToneMapping/Grading)
@@ -147,7 +152,7 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
                       "StarField",          // Deterministic star field generator (nebula debug)
                       "VolumetricNebula",   // Volumetric nebula raymarcher + composite
                     "Watermark"           // Export watermark overlays
-                 ])
+                                 ], bundle: GraphicsBundleHelper.bundle)
             }
         }
 
@@ -164,8 +169,11 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
             || lib.makeFunction(name: "source_person_mask") == nil
             || lib.makeFunction(name: "fx_volumetric_nebula") == nil
             || lib.makeFunction(name: "fx_volumetric_composite") == nil) {
-            logDebug("⚠️ Bundled library missing required kernels; recompiling from sources")
-            self.library = try await compileLibraryFromHardcodedSources(files: [
+            if mode == .production {
+                throw RuntimeError("Bundled Metal library is missing required kernels")
+            }
+            logDebug("⚠️ Bundled library missing required kernels; recompiling from bundle sources")
+            self.library = try await compileLibraryFromBundledMetalSources(files: [
                 "ClearColor",
                 "ColorSpace",
                 "ACES",
@@ -187,7 +195,7 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
                 "StarField",
                 "VolumetricNebula",
                 "Watermark"
-            ])
+            ], bundle: GraphicsBundleHelper.bundle)
         }
         
         if self.library == nil {
@@ -1013,6 +1021,8 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
             bindFloat("alpha1", 0)
             bindFloat("alpha2", 1)
         } else if node.shader == "fx_zone_plate" {
+            bindFloat("time", 0)
+        } else if node.shader == "fx_starfield" {
             bindFloat("time", 0)
         } else if node.shader == "fx_blur_h" || node.shader == "fx_blur_v" {
             bindFloat("radius", 0)

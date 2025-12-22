@@ -117,13 +117,25 @@ public extension MasterSensors {
 
     struct SourceInfo: Sendable, Codable, Equatable {
         public let path: String
+        /// Optional stable content hash (hex), intended to be stable across machines and renames.
+        ///
+        /// When present, this should match `SourceContentHashV1`.
+        public let contentHashHex: String?
         public let durationSeconds: Double
         public let width: Int?
         public let height: Int?
         public let nominalFPS: Double?
 
-        public init(path: String, durationSeconds: Double, width: Int?, height: Int?, nominalFPS: Double?) {
+        public init(
+            path: String,
+            contentHashHex: String? = nil,
+            durationSeconds: Double,
+            width: Int?,
+            height: Int?,
+            nominalFPS: Double?
+        ) {
             self.path = path
+            self.contentHashHex = contentHashHex
             self.durationSeconds = durationSeconds
             self.width = width
             self.height = height
@@ -304,10 +316,19 @@ public extension MasterSensors {
         /// v1 MVP: derived deterministically from stable track index (no faceprints yet).
         public let personId: String?
 
-        public init(trackId: UUID, rect: CGRect, personId: String? = nil) {
+        /// Optional per-face mouth openness proxy derived from Vision lip landmarks.
+        ///
+        /// This is a *visual* scalar intended for downstream fusion (e.g. speaker binding). It is not
+        /// a direct "is speaking" claim.
+        ///
+        /// Units: normalized area of the lip polygon in face-local coordinates (roughly 0..1).
+        public let mouthOpenRatio: Double?
+
+        public init(trackId: UUID, rect: CGRect, personId: String? = nil, mouthOpenRatio: Double? = nil) {
             self.trackId = trackId
             self.rect = rect
             self.personId = personId
+            self.mouthOpenRatio = mouthOpenRatio
         }
     }
 

@@ -301,6 +301,12 @@ public struct TimelineCompiler {
                     shader: "fx_zone_plate",
                     parameters: ["time": .float(localTime.seconds)]
                 )
+            } else if id.contains("starfield") {
+                sourceNode = RenderNode(
+                    name: "Starfield_\(clip.id.uuidString)",
+                    shader: "fx_starfield",
+                    parameters: ["time": .float(localTime.seconds)]
+                )
             } else if id.contains("smpte") {
                 sourceNode = RenderNode(
                     name: "SMPTE_\(clip.id.uuidString)",

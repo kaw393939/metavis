@@ -23,11 +23,18 @@ public struct MasterSensorIngestor: Sendable {
         public var segmentationKeyframeStrideSeconds: Double?
 
         public var enableFaces: Bool
+        /// When enabled, runs Vision face landmarks and attaches a per-face mouth openness proxy
+        /// (`MasterSensors.Face.mouthOpenRatio`) to each tracked face.
+        ///
+        /// This is intended as a deterministic visual cue for late fusion (e.g. speaker binding).
+        public var enableFaceParts: Bool
         public var enableSegmentation: Bool
         public var enableAudio: Bool
         public var enableWarnings: Bool
         public var enableDescriptors: Bool
         public var enableSuggestedStart: Bool
+
+        public var vadConfiguration: VADConfiguration
 
         public init(
             videoStartSeconds: Double = 0.0,
@@ -36,11 +43,13 @@ public struct MasterSensorIngestor: Sendable {
             audioAnalyzeSeconds: Double = 10.0,
             segmentationKeyframeStrideSeconds: Double? = nil,
             enableFaces: Bool = true,
+            enableFaceParts: Bool = false,
             enableSegmentation: Bool = true,
             enableAudio: Bool = true,
             enableWarnings: Bool = true,
             enableDescriptors: Bool = true,
-            enableSuggestedStart: Bool = true
+            enableSuggestedStart: Bool = true,
+            vadConfiguration: VADConfiguration = .default
         ) {
             self.videoStartSeconds = videoStartSeconds
             self.videoStrideSeconds = videoStrideSeconds
@@ -50,11 +59,14 @@ public struct MasterSensorIngestor: Sendable {
             self.segmentationKeyframeStrideSeconds = segmentationKeyframeStrideSeconds
 
             self.enableFaces = enableFaces
+            self.enableFaceParts = enableFaceParts
             self.enableSegmentation = enableSegmentation
             self.enableAudio = enableAudio
             self.enableWarnings = enableWarnings
             self.enableDescriptors = enableDescriptors
             self.enableSuggestedStart = enableSuggestedStart
+
+            self.vadConfiguration = vadConfiguration
         }
     }
 
@@ -166,6 +178,7 @@ public struct MasterSensorIngestor: Sendable {
         return MasterSensors(
             source: .init(
                 path: url.path,
+                contentHashHex: sourceKey,
                 durationSeconds: durationSeconds,
                 width: videoInfo.width,
                 height: videoInfo.height,
@@ -281,6 +294,61 @@ public struct MasterSensorIngestor: Sendable {
         var stableIndexByVisionID: [UUID: Int] = [:]
         var nextStableIndex: Int = 0
 
+        // Best-effort face landmarks request (used only when enableFaceParts=true).
+        // Reuse across frames for performance.
+        let landmarksRequest = VNDetectFaceLandmarksRequest()
+
+        func rectTopLeft(fromVisionBoundingBox bb: CGRect) -> CGRect {
+            // Vision uses bottom-left normalized coordinates.
+            CGRect(x: bb.minX, y: 1.0 - bb.maxY, width: bb.width, height: bb.height)
+        }
+
+        func iou(_ a: CGRect, _ b: CGRect) -> Double {
+            let ax0 = Double(a.minX), ay0 = Double(a.minY), ax1 = Double(a.maxX), ay1 = Double(a.maxY)
+            let bx0 = Double(b.minX), by0 = Double(b.minY), bx1 = Double(b.maxX), by1 = Double(b.maxY)
+
+            let ix0 = max(ax0, bx0)
+            let iy0 = max(ay0, by0)
+            let ix1 = min(ax1, bx1)
+            let iy1 = min(ay1, by1)
+            let iw = max(0.0, ix1 - ix0)
+            let ih = max(0.0, iy1 - iy0)
+            let inter = iw * ih
+            let areaA = max(0.0, (ax1 - ax0) * (ay1 - ay0))
+            let areaB = max(0.0, (bx1 - bx0) * (by1 - by0))
+            let denom = max(0.000000001, areaA + areaB - inter)
+            return inter / denom
+        }
+
+        func mouthOpenRatio(from observation: VNFaceObservation) -> Double? {
+            guard let lm = observation.landmarks else { return nil }
+            let region = lm.outerLips ?? lm.innerLips
+            guard let region, region.pointCount >= 3 else { return nil }
+
+            // NOTE: Landmark points are normalized within the face bounding box coordinate space.
+            // We use an aspect-ratio-style proxy for openness: lip bbox height / width.
+            // This is typically more sensitive to mouth opening/closing than polygon area,
+            // and is less biased by face scale.
+            let pts: [CGPoint] = region.normalizedPoints.map { CGPoint(x: CGFloat($0.x), y: CGFloat($0.y)) }
+            var minX = Double.greatestFiniteMagnitude
+            var minY = Double.greatestFiniteMagnitude
+            var maxX = -Double.greatestFiniteMagnitude
+            var maxY = -Double.greatestFiniteMagnitude
+            for p in pts {
+                let x = Double(p.x)
+                let y = Double(p.y)
+                minX = min(minX, x); maxX = max(maxX, x)
+                minY = min(minY, y); maxY = max(maxY, y)
+            }
+            let w = max(0.0, maxX - minX)
+            let h = max(0.0, maxY - minY)
+            guard w > 0.000001 else { return nil }
+            let r = h / w
+            if !r.isFinite { return nil }
+            // Clamp to a conservative range.
+            return max(0.0, min(1.0, r))
+        }
+
         var timeIndex = 0
         var nextTime = requestedTimes[timeIndex]
 
@@ -313,6 +381,61 @@ public struct MasterSensorIngestor: Sendable {
                 if options.enableFaces {
                     // Track faces (stable UUID per tracker).
                     let tracked = trackRes?.tracks ?? [:]
+
+                    // Optional: compute per-face mouth openness via Vision landmarks.
+                    // We map landmark observations to tracker rectangles using IoU in normalized top-left space.
+                    var mouthOpenByVisionID: [UUID: Double] = [:]
+                    if options.enableFaceParts, !tracked.isEmpty {
+                        do {
+                            let handler = VNImageRequestHandler(cvPixelBuffer: pb, options: [:])
+                            try handler.perform([landmarksRequest])
+                            let obs = landmarksRequest.results ?? []
+
+                            struct ObsItem {
+                                var rectTL: CGRect
+                                var mouthOpen: Double?
+                            }
+                            var obsItems: [ObsItem] = []
+                            obsItems.reserveCapacity(obs.count)
+                            for o in obs {
+                                obsItems.append(.init(rectTL: rectTopLeft(fromVisionBoundingBox: o.boundingBox), mouthOpen: mouthOpenRatio(from: o)))
+                            }
+
+                            for (visionID, rTL) in tracked {
+                                var bestIoU = 0.0
+                                var bestRect: CGRect?
+                                var best: Double?
+                                for oi in obsItems {
+                                    let v = iou(rTL, oi.rectTL)
+                                    if v > bestIoU + 0.0000001 {
+                                        bestIoU = v
+                                        bestRect = oi.rectTL
+                                        best = oi.mouthOpen
+                                    } else if abs(v - bestIoU) <= 0.0000001, v > 0.0 {
+                                        // Deterministic tie-break on rect geometry.
+                                        if let br = bestRect {
+                                            if oi.rectTL.minX != br.minX {
+                                                if oi.rectTL.minX < br.minX { bestRect = oi.rectTL; best = oi.mouthOpen }
+                                            } else if oi.rectTL.minY != br.minY {
+                                                if oi.rectTL.minY < br.minY { bestRect = oi.rectTL; best = oi.mouthOpen }
+                                            } else if oi.rectTL.width != br.width {
+                                                if oi.rectTL.width > br.width { bestRect = oi.rectTL; best = oi.mouthOpen }
+                                            } else if oi.rectTL.height != br.height {
+                                                if oi.rectTL.height > br.height { bestRect = oi.rectTL; best = oi.mouthOpen }
+                                            }
+                                        }
+                                    }
+                                }
+                                if bestIoU >= 0.03, let best {
+                                    mouthOpenByVisionID[visionID] = best
+                                }
+                            }
+                        } catch {
+                            // Best-effort: face parts are optional and should not fail ingest.
+                            mouthOpenByVisionID = [:]
+                        }
+                    }
+
                     var items = tracked.map { (visionID: $0.key, rect: Self.quantizeNormalizedRect($0.value)) }
                     // Sort by geometry (deterministic) rather than Vision UUID string.
                     items.sort {
@@ -336,7 +459,12 @@ public struct MasterSensorIngestor: Sendable {
                         let stableID = deterministicUUID(sourceKey: sourceKey, index: idx)
                         // MVP identity: stable personId derived from stable index.
                         // This intentionally does not claim cross-shot re-identification yet.
-                        return MasterSensors.Face(trackId: stableID, rect: item.rect, personId: "P\(idx)")
+                        return MasterSensors.Face(
+                            trackId: stableID,
+                            rect: item.rect,
+                            personId: "P\(idx)",
+                            mouthOpenRatio: mouthOpenByVisionID[item.visionID]
+                        )
                     }
                 } else {
                     faces = []
@@ -598,8 +726,12 @@ public struct MasterSensorIngestor: Sendable {
 
         var sampleRate: Double = 0
         var channels: Int = 1
-        var monoSamples: [Float] = []
-        monoSamples.reserveCapacity(Int(48_000.0 * min(maxAnalyzeSeconds, 10.0)))
+
+        let vadConfig = options.vadConfiguration
+        var windowAccumulator: AudioVADHeuristics.WindowAccumulator?
+
+        var fftScanMono: [Float] = []
+        var fftScanCapacity: Int = 0
 
         while reader.status == .reading {
             guard let sb = output.copyNextSampleBuffer() else { break }
@@ -610,6 +742,14 @@ public struct MasterSensorIngestor: Sendable {
                     let asbd = asbdPtr.pointee
                     sampleRate = asbd.mSampleRate
                     channels = max(1, Int(asbd.mChannelsPerFrame))
+
+                    if sampleRate > 1000 {
+                        windowAccumulator = AudioVADHeuristics.WindowAccumulator(sampleRate: sampleRate, config: vadConfig)
+                        fftScanCapacity = max(0, min(Int(sampleRate * maxAnalyzeSeconds), Int(sampleRate * 2.0) + 1024))
+                        if fftScanCapacity > 0 {
+                            fftScanMono.reserveCapacity(fftScanCapacity)
+                        }
+                    }
                 }
             }
 
@@ -626,21 +766,42 @@ public struct MasterSensorIngestor: Sendable {
 
                 // Build mono for VAD.
                 guard !floats.isEmpty else { return }
+                guard let windowAccumulator else { return }
+
                 if channels <= 1 {
-                    monoSamples.append(contentsOf: floats)
+                    windowAccumulator.append(mono: floats)
+                    if fftScanMono.count < fftScanCapacity {
+                        let remaining = fftScanCapacity - fftScanMono.count
+                        if remaining > 0 {
+                            fftScanMono.append(contentsOf: floats.prefix(remaining))
+                        }
+                    }
                     return
                 }
 
                 let frameCount = floats.count / channels
                 if frameCount <= 0 { return }
-                monoSamples.reserveCapacity(monoSamples.count + frameCount)
+
+                var monoChunk: [Float] = []
+                monoChunk.reserveCapacity(frameCount)
                 for frame in 0..<frameCount {
                     var sum: Float = 0
                     let base = frame * channels
                     for c in 0..<channels {
                         sum += floats[base + c]
                     }
-                    monoSamples.append(sum / Float(channels))
+                    monoChunk.append(sum / Float(channels))
+                }
+
+                monoChunk.withUnsafeBufferPointer { buf in
+                    windowAccumulator.append(mono: buf)
+                }
+
+                if fftScanMono.count < fftScanCapacity {
+                    let remaining = fftScanCapacity - fftScanMono.count
+                    if remaining > 0 {
+                        fftScanMono.append(contentsOf: monoChunk.prefix(remaining))
+                    }
                 }
             }
 
@@ -711,8 +872,8 @@ public struct MasterSensorIngestor: Sendable {
         }
 
         let fft: (dominantHz: Double, centroidHz: Double)?
-        if sampleRate > 1000, monoSamples.count >= 1024 {
-            fft = Self.audioFFTDominantAndCentroidHz(monoSamples: monoSamples, sampleRate: sampleRate)
+        if sampleRate > 1000, fftScanMono.count >= 1024 {
+            fft = Self.audioFFTDominantAndCentroidHz(monoSamples: fftScanMono, sampleRate: sampleRate)
         } else {
             fft = nil
         }
@@ -729,19 +890,10 @@ public struct MasterSensorIngestor: Sendable {
         let segments: [MasterSensors.AudioSegment]
         let frames: [MasterSensors.AudioFrame]
         let beats: [MasterSensors.AudioBeat]
-        if sampleRate > 1000, !monoSamples.isEmpty {
-            segments = AudioVADHeuristics.segment(
-                mono: monoSamples,
-                sampleRate: sampleRate,
-                windowSeconds: 0.5,
-                hopSeconds: 0.25
-            )
-            frames = AudioVADHeuristics.frames(
-                mono: monoSamples,
-                sampleRate: sampleRate,
-                windowSeconds: 0.5,
-                hopSeconds: 0.25
-            )
+        if sampleRate > 1000, let windowAccumulator {
+            let windows = windowAccumulator.windows
+            segments = AudioVADHeuristics.segment(from: windows, hopSeconds: vadConfig.hopSeconds, config: vadConfig)
+            frames = AudioVADHeuristics.frames(from: windows, hopSeconds: vadConfig.hopSeconds)
             beats = AudioVADHeuristics.beats(from: frames)
         } else {
             segments = []

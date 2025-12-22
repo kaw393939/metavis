@@ -28,6 +28,8 @@ public actor GeminiDevice: VirtualDevice {
 
     private var config: GeminiConfig
     private var propertyStore: [String: NodeValue]
+    private let urlSession: URLSession
+    private var client: GeminiClient
 
     public var properties: [String: NodeValue] {
         get async { propertyStore }
@@ -40,7 +42,9 @@ public actor GeminiDevice: VirtualDevice {
                 description: "Ask Gemini a question and return a text answer.",
                 parameters: [
                     "prompt": "string",
-                    "system": "string (optional)"
+                    "system": "string (optional)",
+                    "imageData": "data (optional; JPEG/PNG)",
+                    "imageMimeType": "string (optional; e.g. image/jpeg)"
                 ]
             ),
             "reload_config": ActionDefinition(
@@ -51,13 +55,15 @@ public actor GeminiDevice: VirtualDevice {
         ]
     }
 
-    public init(config: GeminiConfig? = nil) throws {
+    public init(config: GeminiConfig? = nil, urlSession: URLSession = .shared) throws {
         let resolved = try (config ?? GeminiConfig.fromEnvironment())
         self.config = resolved
         self.propertyStore = [
             "model": .string(resolved.model),
             "baseURL": .string(resolved.baseURL.absoluteString)
         ]
+        self.urlSession = urlSession
+        self.client = GeminiClient(config: resolved, urlSession: urlSession)
     }
 
     @discardableResult
@@ -67,6 +73,7 @@ public actor GeminiDevice: VirtualDevice {
             self.config = try GeminiConfig.fromEnvironment()
             self.propertyStore["model"] = .string(self.config.model)
             self.propertyStore["baseURL"] = .string(self.config.baseURL.absoluteString)
+            self.client = GeminiClient(config: self.config, urlSession: urlSession)
             return ["ok": .bool(true)]
 
         case "ask_expert":
@@ -80,8 +87,30 @@ public actor GeminiDevice: VirtualDevice {
                 system = nil
             }
 
-            let client = GeminiClient(config: config)
-            let text = try await client.generateText(system: system, user: prompt)
+            var parts: [GeminiGenerateContentRequest.Part] = []
+            if let system, !system.isEmpty {
+                parts.append(.text("SYSTEM: \(system)"))
+            }
+            parts.append(.text(prompt))
+
+            if case .data(let data)? = params["imageData"], !data.isEmpty {
+                let mimeType: String
+                if case .string(let m)? = params["imageMimeType"], !m.isEmpty {
+                    mimeType = m
+                } else {
+                    mimeType = "image/jpeg"
+                }
+                parts.append(.inlineData(mimeType: mimeType, dataBase64: data.base64EncodedString()))
+            }
+
+            let requestBody = GeminiGenerateContentRequest(contents: [
+                .init(role: "user", parts: parts)
+            ])
+
+            let response = try await client.generateContent(requestBody)
+            guard let text = response.primaryText, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw GeminiError.emptyResponse
+            }
             return ["text": .string(text)]
 
         default:
@@ -94,12 +123,14 @@ public actor GeminiDevice: VirtualDevice {
         case ("model", .string(let model)):
             config.model = model
             propertyStore["model"] = .string(model)
+            client = GeminiClient(config: config, urlSession: urlSession)
         case ("baseURL", .string(let urlString)):
             guard let url = URL(string: urlString) else {
                 throw GeminiError.misconfigured("Invalid baseURL")
             }
             config.baseURL = url
             propertyStore["baseURL"] = .string(url.absoluteString)
+            client = GeminiClient(config: config, urlSession: urlSession)
         default:
             propertyStore[key] = value
         }

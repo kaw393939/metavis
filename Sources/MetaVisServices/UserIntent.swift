@@ -32,3 +32,17 @@ public struct UserIntent: Codable, Sendable, Equatable {
         self.clipId = clipId
     }
 }
+
+public extension UserIntent {
+    /// Human-readable schema description used to constrain model outputs.
+    static let jsonSchemaDescription: String = #"""
+Return JSON only, matching this schema exactly:
+{
+  "action": "color_grade|cut|speed|move|trim_in|trim_end|ripple_trim_out|ripple_trim_in|ripple_delete",
+  "target": "string",               // may be empty for purely temporal edits
+  "params": { "key": number, ... }, // numbers must be finite
+  "clipId": "uuid"                   // optional; include when targeting a specific clip
+}
+No markdown, no code fences, no extra top-level keys.
+"""#
+}

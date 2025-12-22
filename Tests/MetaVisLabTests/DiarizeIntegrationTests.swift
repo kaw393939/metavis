@@ -118,6 +118,7 @@ final class DiarizeIntegrationTests: XCTestCase {
         var speakerMap: SpeakerDiarizer.SpeakerMapV1
         var vtt: String
         var diarizedWords: [TranscriptWordV1]
+        var attributions: [TranscriptAttributionV1]
 
         var speakerLabels: [String] {
             speakerMap.speakers.map { "\($0.speakerLabel)" }
@@ -145,6 +146,16 @@ final class DiarizeIntegrationTests: XCTestCase {
             }
             return true
         }
+    }
+
+    private struct DiarizeRunArtifacts {
+        var speakerMap: SpeakerDiarizer.SpeakerMapV1
+        var vtt: String
+        var diarizedWords: [TranscriptWordV1]
+        var attributions: [TranscriptAttributionV1]
+        var temporal: TemporalContextV1
+        var bindings: IdentityBindingGraphV1
+        var semanticFrames: [SemanticFrameV2]
     }
 
     private func runPipeline(input: String, maxTranscriptSeconds: Int, allowLarge: Bool) async throws -> PipelineOutput {
@@ -203,28 +214,134 @@ final class DiarizeIntegrationTests: XCTestCase {
         let sensorsURL = outDir.appendingPathComponent("sensors.json")
         let transcriptURL = outDir.appendingPathComponent("transcript.words.v1.jsonl")
 
-        try await DiarizeCommand.run(args: [
-            "--sensors", sensorsURL.path,
-            "--transcript", transcriptURL.path,
-            "--out", outDir.path
-        ])
+        // Run diarization twice from identical inputs and assert byte-for-byte determinism.
+        let artifacts1 = try await runDiarizeOnce(outDir: outDir, runName: "run1", sensorsURL: sensorsURL, transcriptURL: transcriptURL)
+        _ = try await runDiarizeOnce(outDir: outDir, runName: "run2", sensorsURL: sensorsURL, transcriptURL: transcriptURL)
 
-        let mapURL = outDir.appendingPathComponent("speaker_map.v1.json")
-        let vttURL = outDir.appendingPathComponent("captions.vtt")
-        let diarizedWordsURL = outDir.appendingPathComponent("transcript.words.v1.jsonl")
+        let compareFiles: [String] = [
+            "transcript.words.v1.jsonl",
+            "transcript.attribution.v1.jsonl",
+            "captions.vtt",
+            "speaker_map.v1.json",
+            "temporal.context.v1.json",
+            "identity.bindings.v1.json",
+            "semantic.frame.v2.jsonl"
+        ]
+
+        for f in compareFiles {
+            let a = outDir.appendingPathComponent("run1", isDirectory: true).appendingPathComponent(f)
+            let b = outDir.appendingPathComponent("run2", isDirectory: true).appendingPathComponent(f)
+            let da = try Data(contentsOf: a)
+            let db = try Data(contentsOf: b)
+            XCTAssertEqual(da, db, "Expected deterministic diarize output for \(f)")
+        }
+
+        // Validate attribution sidecar aligns with diarized transcript.
+        XCTAssertEqual(artifacts1.attributions.count, artifacts1.diarizedWords.count, "Expected one attribution per transcript word")
+
+        let wordIds = Set(artifacts1.diarizedWords.map { $0.wordId })
+        let attributionWordIds = Set(artifacts1.attributions.map { $0.wordId })
+        XCTAssertEqual(wordIds, attributionWordIds, "Attribution wordIds should match transcript wordIds")
+
+        for a in artifacts1.attributions {
+            XCTAssertEqual(a.schema, "transcript.attribution.v1")
+            XCTAssertTrue((0.0...1.0).contains(a.attributionConfidence.score), "Score must be in [0,1]. Got \(a.attributionConfidence.score)")
+            XCTAssertEqual(a.attributionConfidence.sources, a.attributionConfidence.sources.sorted())
+            XCTAssertEqual(a.attributionConfidence.reasons, a.attributionConfidence.reasons.sorted())
+        }
+
+        XCTAssertEqual(artifacts1.temporal.schema, "temporal.context.v1")
+        XCTAssertTrue(artifacts1.temporal.analyzedSeconds > 0)
+
+        XCTAssertEqual(artifacts1.bindings.schema, "identity.bindings.v1")
+        XCTAssertTrue(artifacts1.bindings.analyzedSeconds > 0)
+
+        for e in artifacts1.bindings.bindings {
+            XCTAssertTrue((0.0...1.0).contains(e.posterior), "Posterior must be in [0,1]. Got \(e.posterior)")
+            XCTAssertTrue((0.0...1.0).contains(Double(e.confidence.score)), "Score must be in [0,1]. Got \(e.confidence.score)")
+        }
+
+        XCTAssertFalse(artifacts1.semanticFrames.isEmpty, "Expected semantic.frame.v2.jsonl to contain records")
+        XCTAssertEqual(artifacts1.semanticFrames.first?.schema, "semantic.frame.v2")
+
+        // SemanticFrameV2Builder extensions sanity: frame-level metric tags and per-subject speaking surface.
+        if let first = artifacts1.semanticFrames.first {
+            XCTAssertFalse(first.contextTags.isEmpty)
+            XCTAssertTrue(first.contextTags.contains("video.meanLuma"))
+            XCTAssertTrue(first.contextTags.contains("video.faces.count"))
+        }
+
+        if let firstSubject = artifacts1.semanticFrames.first?.subjects.first {
+            let keys = Set(firstSubject.attributes.map { $0.key })
+            XCTAssertTrue(keys.contains("isSpeaking"))
+        }
+
+        return PipelineOutput(
+            speakerMap: artifacts1.speakerMap,
+            vtt: artifacts1.vtt,
+            diarizedWords: artifacts1.diarizedWords,
+            attributions: artifacts1.attributions
+        )
+    }
+
+    private func runDiarizeOnce(outDir: URL, runName: String, sensorsURL: URL, transcriptURL: URL) async throws -> DiarizeRunArtifacts {
+        let runDir = outDir.appendingPathComponent(runName, isDirectory: true)
+        try? FileManager.default.removeItem(at: runDir)
+        try FileManager.default.createDirectory(at: runDir, withIntermediateDirectories: true)
+
+        // Copy inputs so each diarize run starts from identical bytes.
+        try FileManager.default.copyItem(at: sensorsURL, to: runDir.appendingPathComponent("sensors.json"))
+        try FileManager.default.copyItem(at: transcriptURL, to: runDir.appendingPathComponent("transcript.words.v1.jsonl"))
+
+        try await DiarizeCommand.run(args: [
+            "--sensors", runDir.appendingPathComponent("sensors.json").path,
+            "--transcript", runDir.appendingPathComponent("transcript.words.v1.jsonl").path,
+            "--out", runDir.path
+        ])
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
+
+        let mapURL = runDir.appendingPathComponent("speaker_map.v1.json")
+        let vttURL = runDir.appendingPathComponent("captions.vtt")
+        let diarizedWordsURL = runDir.appendingPathComponent("transcript.words.v1.jsonl")
+        let attributionsURL = runDir.appendingPathComponent("transcript.attribution.v1.jsonl")
+        let temporalURL = runDir.appendingPathComponent("temporal.context.v1.json")
+        let bindingsURL = runDir.appendingPathComponent("identity.bindings.v1.json")
+        let semanticURL = runDir.appendingPathComponent("semantic.frame.v2.jsonl")
+
         let map = try decoder.decode(SpeakerDiarizer.SpeakerMapV1.self, from: Data(contentsOf: mapURL))
         let vtt = try String(contentsOf: vttURL, encoding: .utf8)
 
-        // Parse diarized transcript JSONL for speaker distribution assertions.
-        let raw = try String(contentsOf: diarizedWordsURL, encoding: .utf8)
-        let lines = raw.split(separator: "\n").map(String.init)
-        let diarizedWords: [TranscriptWordV1] = try lines.map { line in
+        let rawWords = try String(contentsOf: diarizedWordsURL, encoding: .utf8)
+        let wordLines = rawWords.split(separator: "\n").map(String.init)
+        let diarizedWords: [TranscriptWordV1] = try wordLines.map { line in
             try decoder.decode(TranscriptWordV1.self, from: Data(line.utf8))
         }
 
-        return PipelineOutput(speakerMap: map, vtt: vtt, diarizedWords: diarizedWords)
+        let rawAttrib = try String(contentsOf: attributionsURL, encoding: .utf8)
+        let attribLines = rawAttrib.split(separator: "\n").map(String.init)
+        let attributions: [TranscriptAttributionV1] = try attribLines.map { line in
+            try decoder.decode(TranscriptAttributionV1.self, from: Data(line.utf8))
+        }
+
+        let temporal = try decoder.decode(TemporalContextV1.self, from: Data(contentsOf: temporalURL))
+        let bindings = try decoder.decode(IdentityBindingGraphV1.self, from: Data(contentsOf: bindingsURL))
+
+        let rawSemantic = try String(contentsOf: semanticURL, encoding: .utf8)
+        let semanticLines = rawSemantic.split(separator: "\n").map(String.init)
+        let semanticFrames: [SemanticFrameV2] = try semanticLines.map { line in
+            try decoder.decode(SemanticFrameV2.self, from: Data(line.utf8))
+        }
+
+        return DiarizeRunArtifacts(
+            speakerMap: map,
+            vtt: vtt,
+            diarizedWords: diarizedWords,
+            attributions: attributions,
+            temporal: temporal,
+            bindings: bindings,
+            semanticFrames: semanticFrames
+        )
     }
 }

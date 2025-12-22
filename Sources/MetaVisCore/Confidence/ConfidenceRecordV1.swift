@@ -128,6 +128,10 @@ public enum ReasonCodeV1: String, Codable, Sendable, Equatable, Comparable {
     case track_missing
     case track_ambiguous
 
+    // Diarization binding limitations (v1)
+    // Used when a diarization speaker cluster cannot be bound to a specific face track/person.
+    case speaker_binding_missing
+
     // MasterSensors warnings (governed)
     // Video
     case no_face_detected

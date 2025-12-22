@@ -6,8 +6,12 @@ public struct LLMRequest: Sendable, Codable {
     public let systemPrompt: String
     public let userQuery: String
     public let context: String // JSON representation of Visual/Timeline context
+
+    public static let defaultSystemPrompt: String = {
+        "You are Jarvis, a helpful video editing assistant.\n\n" + UserIntent.jsonSchemaDescription
+    }()
     
-    public init(systemPrompt: String = "You are Jarvis, a helpful video editing assistant.", userQuery: String, context: String) {
+    public init(systemPrompt: String = Self.defaultSystemPrompt, userQuery: String, context: String) {
         self.systemPrompt = systemPrompt
         self.userQuery = userQuery
         self.context = context
@@ -19,11 +23,17 @@ public struct LLMResponse: Sendable, Codable {
     public let text: String
     public let intentJSON: String? // Extracted JSON block if present
     public let latency: TimeInterval
+
+    public init(text: String, intentJSON: String?, latency: TimeInterval) {
+        self.text = text
+        self.intentJSON = intentJSON
+        self.latency = latency
+    }
 }
 
 /// The Service responsible for Text Generation.
 /// Wraps a local CoreML Transformer (e.g. Llama-3-8B).
-public actor LocalLLMService {
+public actor LocalLLMService: LLMProvider {
     
     public init() {}
     
@@ -41,8 +51,8 @@ public actor LocalLLMService {
         // Context: <request.context>
         // User: <request.userQuery>
         
-        // Simulating "Thinking"
-        try await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+        // NOTE: This is a deterministic heuristic implementation (used as a fallback when
+        // a real on-device model isn't available). We do not add artificial latency here.
         
         // Mock Logic: keyword-based intent emission.
         let responseText: String

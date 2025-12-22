@@ -32,8 +32,8 @@ enum SensorsHelp {
     MetaVisLab sensors ingest --input <movie.mov> --out <dir> [--stride <s>] [--max-video-seconds <s>] [--audio-seconds <s>] [--emit-bites] [--allow-large]
 
     Detector flags (optional):
-      --enable <face|segment|audio|warnings|descriptors|autostart>
-      --disable <face|segment|audio|warnings|descriptors|autostart>
+            --enable <face|faceparts|segment|audio|warnings|descriptors|autostart>
+            --disable <face|faceparts|segment|audio|warnings|descriptors|autostart>
 
     Notes:
       - If any --enable is provided, only those detectors are enabled (others default to disabled).
@@ -55,6 +55,7 @@ enum SensorsIngestCommand {
         var allowLarge: Bool
 
         var enableFaces: Bool
+        var enableFaceParts: Bool
         var enableSegmentation: Bool
         var enableAudio: Bool
         var enableWarnings: Bool
@@ -101,6 +102,7 @@ enum SensorsIngestCommand {
                 maxVideoSeconds: options.maxVideoSeconds,
                 audioAnalyzeSeconds: options.audioSeconds,
                 enableFaces: options.enableFaces,
+                enableFaceParts: options.enableFaceParts,
                 enableSegmentation: options.enableSegmentation,
                 enableAudio: options.enableAudio,
                 enableWarnings: options.enableWarnings,
@@ -137,6 +139,7 @@ enum SensorsIngestCommand {
 
     enum Detector: String, CaseIterable {
         case face
+        case faceparts
         case segment
         case audio
         case warnings
@@ -186,14 +189,14 @@ enum SensorsIngestCommand {
             case "--enable":
                 i += 1
                 guard i < args.count, let d = Detector(rawValue: args[i]) else {
-                    throw NSError(domain: "MetaVisLab", code: 2, userInfo: [NSLocalizedDescriptionKey: "--enable requires one of: face|segment|audio|warnings|descriptors|autostart"])
+                    throw NSError(domain: "MetaVisLab", code: 2, userInfo: [NSLocalizedDescriptionKey: "--enable requires one of: face|faceparts|segment|audio|warnings|descriptors|autostart"])
                 }
                 sawEnable = true
                 enableSet.insert(d)
             case "--disable":
                 i += 1
                 guard i < args.count, let d = Detector(rawValue: args[i]) else {
-                    throw NSError(domain: "MetaVisLab", code: 2, userInfo: [NSLocalizedDescriptionKey: "--disable requires one of: face|segment|audio|warnings|descriptors|autostart"])
+                    throw NSError(domain: "MetaVisLab", code: 2, userInfo: [NSLocalizedDescriptionKey: "--disable requires one of: face|faceparts|segment|audio|warnings|descriptors|autostart"])
                 }
                 disableSet.insert(d)
             default:
@@ -236,6 +239,7 @@ enum SensorsIngestCommand {
             emitBites: emitBites,
             allowLarge: allowLarge,
             enableFaces: isOn(.face),
+            enableFaceParts: isOn(.faceparts),
             enableSegmentation: isOn(.segment),
             enableAudio: isOn(.audio),
             enableWarnings: isOn(.warnings),

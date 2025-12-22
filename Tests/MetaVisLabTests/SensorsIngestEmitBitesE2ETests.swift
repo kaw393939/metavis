@@ -23,6 +23,7 @@ final class SensorsIngestEmitBitesE2ETests: XCTestCase {
             emitBites: true,
             allowLarge: true,
             enableFaces: true,
+            enableFaceParts: false,
             enableSegmentation: true,
             enableAudio: true,
             enableWarnings: true,

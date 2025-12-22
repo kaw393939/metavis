@@ -207,6 +207,18 @@ public actor ClipReader {
 
     private let ciContext: CIContext
 
+    public struct CacheStats: Sendable, Equatable {
+        public var frameCacheCount: Int
+        public var stillPixelBufferCount: Int
+        public var decoderCount: Int
+
+        public init(frameCacheCount: Int, stillPixelBufferCount: Int, decoderCount: Int) {
+            self.frameCacheCount = frameCacheCount
+            self.stillPixelBufferCount = stillPixelBufferCount
+            self.decoderCount = decoderCount
+        }
+    }
+
     public init(device: MTLDevice, maxCachedFrames: Int = 24) {
         self.device = device
         self.maxCachedFrames = max(4, maxCachedFrames)
@@ -223,6 +235,33 @@ public actor ClipReader {
         } else {
             self.metalTextureCache = nil
         }
+    }
+
+    public func cacheStats() -> CacheStats {
+        CacheStats(
+            frameCacheCount: cache.count,
+            stillPixelBufferCount: stillPixelBuffers.count,
+            decoderCount: decoders.count
+        )
+    }
+
+    public func clearCaches() {
+        cache.removeAll(keepingCapacity: false)
+        cacheOrder.removeAll(keepingCapacity: false)
+        stillPixelBuffers.removeAll(keepingCapacity: false)
+        decoders.removeAll(keepingCapacity: false)
+        timingDecisions.removeAll(keepingCapacity: false)
+        timingDecisionFailures.removeAll(keepingCapacity: false)
+
+        // Best-effort flush of Metal texture cache.
+        if let metalTextureCache {
+            CVMetalTextureCacheFlush(metalTextureCache, 0)
+        }
+    }
+
+    /// Test seam / manual hook for responding to memory pressure.
+    public func handleMemoryPressure() {
+        clearCaches()
     }
 
     func texture(
@@ -303,7 +342,7 @@ public actor ClipReader {
             } else {
                 let pb: CVPixelBuffer
                 if isEXR {
-                    pb = try FFmpegEXRDecoder.decodeFirstFrameRGBAHalf(exrURL: assetURL, width: width, height: height)
+                    pb = try NativeEXRDecoder.decodeRGBAHalf(exrURL: assetURL, width: width, height: height, ciContext: ciContext)
                 } else {
                     pb = try FITSStillDecoder.decodeRGBAHalf(fitsURL: assetURL, width: width, height: height)
                 }
@@ -532,62 +571,175 @@ public actor ClipReader {
     }
 }
 
-// MARK: - EXR decoding (ffmpeg-based)
+// MARK: - EXR decoding (native ImageIO/CoreImage)
 
-private enum FFmpegEXRDecoder {
+private enum NativeEXRDecoder {
     enum DecodeError: Error, LocalizedError {
-        case ffprobeFailed(String)
-        case ffmpegFailed(String)
-        case invalidProbeOutput
         case invalidDimensions
-        case unexpectedByteCount(expected: Int, got: Int)
+        case cannotLoadImage
         case cannotCreatePixelBuffer(OSStatus)
 
         var errorDescription: String? {
             switch self {
-            case .ffprobeFailed(let msg): return "ffprobe failed: \(msg)"
-            case .ffmpegFailed(let msg): return "ffmpeg failed: \(msg)"
-            case .invalidProbeOutput: return "ffprobe returned unexpected output"
-            case .invalidDimensions: return "ffprobe returned invalid dimensions"
-            case .unexpectedByteCount(let expected, let got): return "ffmpeg raw output size mismatch (expected \(expected) bytes, got \(got) bytes)"
+            case .invalidDimensions: return "Invalid decode dimensions"
+            case .cannotLoadImage: return "Failed to load EXR image (ImageIO/CoreImage)"
             case .cannotCreatePixelBuffer(let status): return "CVPixelBufferCreate failed (\(status))"
             }
         }
     }
 
-    static func decodeFirstFrameRGBAHalf(exrURL: URL, width w: Int, height h: Int) throws -> CVPixelBuffer {
+    static func decodeRGBAHalf(exrURL: URL, width w: Int, height h: Int, ciContext: CIContext) throws -> CVPixelBuffer {
         guard w > 0, h > 0 else { throw DecodeError.invalidDimensions }
 
-        // NOTE: We intentionally avoid piping rawvideo through stdout here.
-        // In practice, larger frames (e.g. 1280x720+) can intermittently hang/timeout
-        // when captured via pipes, causing the engine to fall back to black.
-        // Writing to a temporary file is slower in theory but far more robust and
-        // only happens once per EXR+resolution due to ClipReader caching.
-        let tmpURL = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("metavis_exr_\(UUID().uuidString).rgba128le")
-        defer { try? FileManager.default.removeItem(at: tmpURL) }
+        // Prefer native ImageIO/CoreImage decode when available.
+        if let ci = CIImage(contentsOf: exrURL) {
+            // Scale to requested size if needed.
+            let srcW = max(1, Int(ci.extent.width.rounded()))
+            let srcH = max(1, Int(ci.extent.height.rounded()))
+            let image: CIImage
+            if srcW == w && srcH == h {
+                image = ci
+            } else {
+                let sx = CGFloat(w) / CGFloat(srcW)
+                let sy = CGFloat(h) / CGFloat(srcH)
+                image = ci.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
+            }
 
-        let raw = try runFFmpegAndReadFile(
-            args: [
-                "-nostdin",
-                "-y",
-                "-v", "error",
-                "-i", exrURL.path,
-                "-frames:v", "1",
-                "-vf", "scale=\(w):\(h):flags=bicubic,format=gbrapf32le",
-                "-f", "rawvideo",
-                "-pix_fmt", "gbrapf32le",
-                tmpURL.path
-            ],
-            timeoutSeconds: 20.0
-        )
+            // Render to float32 first, then sanitize/clamp and convert to RGBA16F.
+            // (Some CoreImage paths produce zeros when rendering directly to kCVPixelFormatType_64RGBAHalf.)
+            let cs = CGColorSpace(name: CGColorSpace.linearSRGB) ?? CGColorSpaceCreateDeviceRGB()
+            let rect = CGRect(x: 0, y: 0, width: w, height: h)
 
-        let expectedBytes = w * h * 16 // 4 * Float32
-        guard raw.count >= expectedBytes else {
-            throw DecodeError.unexpectedByteCount(expected: expectedBytes, got: raw.count)
+            var rgba32 = [Float](repeating: 0, count: w * h * 4)
+            rgba32.withUnsafeMutableBytes { raw in
+                ciContext.render(
+                    image,
+                    toBitmap: raw.baseAddress!,
+                    rowBytes: w * 4 * MemoryLayout<Float>.size,
+                    bounds: rect,
+                    format: .RGBAf,
+                    colorSpace: cs
+                )
+            }
+
+            var pb: CVPixelBuffer?
+            let attrs: [CFString: Any] = [
+                kCVPixelBufferCGImageCompatibilityKey: true,
+                kCVPixelBufferCGBitmapContextCompatibilityKey: true,
+                kCVPixelBufferMetalCompatibilityKey: true,
+                kCVPixelBufferIOSurfacePropertiesKey: [:]
+            ]
+            let status = CVPixelBufferCreate(
+                kCFAllocatorDefault,
+                w,
+                h,
+                kCVPixelFormatType_64RGBAHalf,
+                attrs as CFDictionary,
+                &pb
+            )
+            guard status == kCVReturnSuccess, let pb else {
+                throw DecodeError.cannotCreatePixelBuffer(status)
+            }
+
+            CVPixelBufferLockBaseAddress(pb, [])
+            defer { CVPixelBufferUnlockBaseAddress(pb, []) }
+
+            guard let base = CVPixelBufferGetBaseAddress(pb) else {
+                throw DecodeError.cannotCreatePixelBuffer(kCVReturnError)
+            }
+
+            let bytesPerRow = CVPixelBufferGetBytesPerRow(pb)
+            let expectedRowBytes = w * 4 * MemoryLayout<Float16>.size
+            guard bytesPerRow >= expectedRowBytes else {
+                throw DecodeError.cannotCreatePixelBuffer(kCVReturnError)
+            }
+
+            let halfMax = Float(Float16.greatestFiniteMagnitude)
+            for y in 0..<h {
+                let dstRow = base.advanced(by: y * bytesPerRow)
+                let dst = dstRow.bindMemory(to: UInt16.self, capacity: w * 4)
+
+                // CoreImage uses a bottom-left origin; Metal textures (and our tests) treat y=0 as the top row.
+                let srcRowStart = ((h - 1 - y) * w) * 4
+
+                for x in 0..<(w * 4) {
+                    let v = rgba32[srcRowStart + x]
+                    if v.isFinite {
+                        let clamped = min(halfMax, max(-halfMax, v))
+                        dst[x] = Float16(clamped).bitPattern
+                    } else {
+                        dst[x] = Float16(0).bitPattern
+                    }
+                }
+            }
+
+            return pb
         }
 
-        // Convert float32 RGBA -> float16 RGBA (sanitized) into a CVPixelBuffer.
+        // Fallback: use ffmpeg to decode EXR into planar float32 (gbrapf32le) and convert to RGBA16F.
+        // This keeps EXR ingest working on macOS installations without OpenEXR ImageIO support.
+        return try FFmpegEXRDecoder.decodeRGBAHalf(exrURL: exrURL, width: w, height: h)
+    }
+}
+
+private enum FFmpegEXRDecoder {
+    enum DecodeError: Error, LocalizedError {
+        case ffmpegFailed(String)
+        case unexpectedOutput(Int, expected: Int)
+        case cannotCreatePixelBuffer(OSStatus)
+
+        var errorDescription: String? {
+            switch self {
+            case .ffmpegFailed(let msg): return "ffmpeg EXR decode failed: \(msg)"
+            case .unexpectedOutput(let got, let expected): return "ffmpeg EXR decode returned \(got) bytes (expected \(expected))"
+            case .cannotCreatePixelBuffer(let status): return "CVPixelBufferCreate failed (\(status))"
+            }
+        }
+    }
+
+    static func decodeRGBAHalf(exrURL: URL, width w: Int, height h: Int) throws -> CVPixelBuffer {
+        let rawURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("metavis_exr_decode_\(UUID().uuidString).raw")
+        defer { try? FileManager.default.removeItem(at: rawURL) }
+
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+
+        // Decode to planar float32 gbrapf32le (G,B,R,A planes) into a temp file.
+        // Planes are: G, B, R, A (each Float32), top-to-bottom scanlines.
+        p.arguments = [
+            "ffmpeg",
+            "-nostdin",
+            "-y",
+            "-v", "error",
+            "-i", exrURL.path,
+            "-vf", "scale=\(w):\(h):flags=neighbor",
+            "-frames:v", "1",
+            "-f", "rawvideo",
+            "-pix_fmt", "gbrapf32le",
+            rawURL.path
+        ]
+        let errPipe = Pipe()
+        p.standardError = errPipe
+
+        try p.run()
+        p.waitUntilExit()
+
+        let err = errPipe.fileHandleForReading.readDataToEndOfFile()
+
+        guard p.terminationStatus == 0 else {
+            let msg = (String(data: err, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            throw DecodeError.ffmpegFailed(msg.isEmpty ? "exit \(p.terminationStatus)" : msg)
+        }
+
+        let out = (try? Data(contentsOf: rawURL)) ?? Data()
+
+        let planeSize = w * h
+        let expectedBytes = planeSize * 4 * MemoryLayout<Float>.size
+        guard out.count == expectedBytes else {
+            throw DecodeError.unexpectedOutput(out.count, expected: expectedBytes)
+        }
+
         var pb: CVPixelBuffer?
         let attrs: [CFString: Any] = [
             kCVPixelBufferCGImageCompatibilityKey: true,
@@ -611,79 +763,53 @@ private enum FFmpegEXRDecoder {
         defer { CVPixelBufferUnlockBaseAddress(pb, []) }
 
         guard let base = CVPixelBufferGetBaseAddress(pb) else {
-            throw DecodeError.cannotCreatePixelBuffer(-1)
+            throw DecodeError.cannotCreatePixelBuffer(kCVReturnError)
         }
 
-        let dstBytesPerRow = CVPixelBufferGetBytesPerRow(pb)
-        let dstHalfBytesPerRow = w * 8 // 4 * Float16
-        guard dstBytesPerRow >= dstHalfBytesPerRow else {
-            throw DecodeError.cannotCreatePixelBuffer(-2)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pb)
+        let expectedRowBytes = w * 4 * MemoryLayout<Float16>.size
+        guard bytesPerRow >= expectedRowBytes else {
+            throw DecodeError.cannotCreatePixelBuffer(kCVReturnError)
         }
 
-        raw.prefix(expectedBytes).withUnsafeBytes { srcRaw in
-            let srcFloats = srcRaw.bindMemory(to: Float.self)
-            let planeSize = w * h
-            let gOff = 0 * planeSize
-            let bOff = 1 * planeSize
-            let rOff = 2 * planeSize
-            let aOff = 3 * planeSize
+        let halfMax = Float(Float16.greatestFiniteMagnitude)
+
+        out.withUnsafeBytes { raw in
+            let floats = raw.bindMemory(to: Float.self)
+            let gBase = 0 * planeSize
+            let bBase = 1 * planeSize
+            let rBase = 2 * planeSize
+            let aBase = 3 * planeSize
 
             for y in 0..<h {
-                let dstRow = base.advanced(by: y * dstBytesPerRow)
+                let dstRow = base.advanced(by: y * bytesPerRow)
                 let dst = dstRow.bindMemory(to: UInt16.self, capacity: w * 4)
-                for x in 0..<w {
-                    let p = (y * w + x)
-                    let r = ColorScienceReference.sanitizeFinite(srcFloats[rOff + p])
-                    let g = ColorScienceReference.sanitizeFinite(srcFloats[gOff + p])
-                    let b = ColorScienceReference.sanitizeFinite(srcFloats[bOff + p])
-                    let a = ColorScienceReference.sanitizeFinite(srcFloats[aOff + p])
+                let rowBase = y * w
 
-                    dst[(x * 4) + 0] = Float16(r).bitPattern
-                    dst[(x * 4) + 1] = Float16(g).bitPattern
-                    dst[(x * 4) + 2] = Float16(b).bitPattern
-                    dst[(x * 4) + 3] = Float16(a).bitPattern
+                for x in 0..<w {
+                    let i = rowBase + x
+                    let r = floats[rBase + i]
+                    let g = floats[gBase + i]
+                    let b = floats[bBase + i]
+                    let a = floats[aBase + i]
+
+                    @inline(__always)
+                    func toHalfBits(_ v: Float) -> UInt16 {
+                        guard v.isFinite else { return Float16(0).bitPattern }
+                        let clamped = min(halfMax, max(-halfMax, v))
+                        return Float16(clamped).bitPattern
+                    }
+
+                    let o = x * 4
+                    dst[o + 0] = toHalfBits(r)
+                    dst[o + 1] = toHalfBits(g)
+                    dst[o + 2] = toHalfBits(b)
+                    dst[o + 3] = toHalfBits(a)
                 }
             }
         }
 
         return pb
-    }
-
-    private static func runFFmpegAndReadFile(args: [String], timeoutSeconds: Double) throws -> Data {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        p.arguments = ["ffmpeg"] + args
-
-        let errPipe = Pipe()
-        p.standardError = errPipe
-
-        try p.run()
-
-        let start = Date()
-        while p.isRunning {
-            if Date().timeIntervalSince(start) > timeoutSeconds {
-                p.terminate()
-                // Give ffmpeg a moment to exit.
-                Thread.sleep(forTimeInterval: 0.05)
-                throw DecodeError.ffmpegFailed("ffmpeg timed out after \(timeoutSeconds)s")
-            }
-            Thread.sleep(forTimeInterval: 0.005)
-        }
-
-        p.waitUntilExit()
-
-        let err = errPipe.fileHandleForReading.readDataToEndOfFile()
-        guard p.terminationStatus == 0 else {
-            let msg = (String(data: err, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            throw DecodeError.ffmpegFailed(msg.isEmpty ? "ffmpeg failed" : msg)
-        }
-
-        // The last arg is the output file path.
-        guard let outPath = p.arguments?.last else {
-            throw DecodeError.ffmpegFailed("ffmpeg produced no output path")
-        }
-        let outURL = URL(fileURLWithPath: outPath)
-        return try Data(contentsOf: outURL)
     }
 }
 

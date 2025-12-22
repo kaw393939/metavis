@@ -3,6 +3,98 @@ import Accelerate
 
 enum AudioVADHeuristics {
 
+    final class WindowAccumulator {
+        private let sampleRate: Double
+        private let winN: Int
+        private let hopN: Int
+
+        private let dftSetup: OpaquePointer?
+        private let hann: [Float]
+        private var real: [Float]
+        private var imag: [Float]
+        private var outReal: [Float]
+        private var outImag: [Float]
+        private var mags: [Float]
+
+        private var buffer: [Float] = []
+        private var head: Int = 0
+        private var globalStartIndex: Int64 = 0 // global index of buffer[head]
+        private var nextWindowStartIndex: Int64 = 0
+
+        private(set) var windows: [Window] = []
+
+        init(sampleRate: Double, config: VADConfiguration) {
+            self.sampleRate = sampleRate
+
+            let win = max(0.1, config.windowSeconds)
+            let hop = max(0.05, config.hopSeconds)
+            self.winN = max(256, Int((win * sampleRate).rounded(.toNearestOrAwayFromZero)))
+            self.hopN = max(128, Int((hop * sampleRate).rounded(.toNearestOrAwayFromZero)))
+
+            let fftN = 1024
+            self.dftSetup = vDSP_DFT_zop_CreateSetup(nil, vDSP_Length(fftN), vDSP_DFT_Direction.FORWARD)
+            self.hann = hannWindow(count: fftN)
+
+            self.real = [Float](repeating: 0, count: fftN)
+            self.imag = [Float](repeating: 0, count: fftN)
+            self.outReal = [Float](repeating: 0, count: fftN)
+            self.outImag = [Float](repeating: 0, count: fftN)
+            self.mags = [Float](repeating: 0, count: fftN / 2)
+
+            self.buffer.reserveCapacity(self.winN + self.hopN * 2)
+            self.windows.reserveCapacity(max(1, Int((config.hopSeconds > 0.000001) ? (10.0 / config.hopSeconds) : 1)))
+        }
+
+        deinit {
+            if let dftSetup { vDSP_DFT_DestroySetup(dftSetup) }
+        }
+
+        func append(mono: UnsafeBufferPointer<Float>) {
+            guard !mono.isEmpty else { return }
+            buffer.append(contentsOf: mono)
+            processAvailableWindows()
+        }
+
+        private func processAvailableWindows() {
+            while (buffer.count - head) >= winN {
+                let start = Double(nextWindowStartIndex) / sampleRate
+                let end = Double(nextWindowStartIndex + Int64(winN)) / sampleRate
+                let localStart = head
+
+                buffer.withUnsafeBufferPointer { ptr in
+                    guard let base0 = ptr.baseAddress else { return }
+                    let base = base0.advanced(by: localStart)
+                    let rms = AudioVADHeuristics.rmsDB(base, count: winN)
+                    let (centroid, dominantHz, flatness) = AudioVADHeuristics.spectralFeatures(
+                        base,
+                        count: winN,
+                        sampleRate: sampleRate,
+                        dftSetup: dftSetup,
+                        hann: hann,
+                        real: &real,
+                        imag: &imag,
+                        outReal: &outReal,
+                        outImag: &outImag,
+                        mags: &mags
+                    )
+                    let z = AudioVADHeuristics.zeroCrossingRate(base, count: winN)
+                    windows.append(Window(start: start, end: end, rmsDB: rms, centroidHz: centroid, dominantHz: dominantHz, flatness: flatness, zcr: z))
+                }
+
+                // Slide forward by hopN samples.
+                nextWindowStartIndex += Int64(hopN)
+                head += hopN
+                globalStartIndex += Int64(hopN)
+
+                // Periodic compaction to keep memory bounded.
+                if head > 0, head >= 65_536 || head >= buffer.count / 2 {
+                    buffer.removeFirst(head)
+                    head = 0
+                }
+            }
+        }
+    }
+
     struct Window: Sendable {
         var start: Double
         var end: Double
@@ -17,54 +109,30 @@ enum AudioVADHeuristics {
     static func segment(
         mono: [Float],
         sampleRate: Double,
-        windowSeconds: Double = 0.5,
-        hopSeconds: Double = 0.5
+        config: VADConfiguration = .default
     ) -> [MasterSensors.AudioSegment] {
         guard sampleRate.isFinite, sampleRate > 1000, !mono.isEmpty else { return [] }
 
-        let win = max(0.1, windowSeconds)
+        let windows = computeWindows(mono: mono, sampleRate: sampleRate, config: config)
+        return segment(from: windows, hopSeconds: config.hopSeconds, config: config)
+    }
+
+    static func segment(
+        from windows: [Window],
+        hopSeconds: Double,
+        config: VADConfiguration = .default
+    ) -> [MasterSensors.AudioSegment] {
         let hop = max(0.05, hopSeconds)
-
-        let winN = max(256, Int((win * sampleRate).rounded(.toNearestOrAwayFromZero)))
-        let hopN = max(128, Int((hop * sampleRate).rounded(.toNearestOrAwayFromZero)))
-
-        // Reuse one DFT setup for the whole pass for performance.
-        let fftN = 1024
-        let dftSetup = vDSP_DFT_zop_CreateSetup(nil, vDSP_Length(fftN), vDSP_DFT_Direction.FORWARD)
-        defer {
-            if let dftSetup { vDSP_DFT_DestroySetup(dftSetup) }
-        }
-
-        let hann = hannWindow(count: fftN)
-
-        var real = [Float](repeating: 0, count: fftN)
-        var imag = [Float](repeating: 0, count: fftN)
-        var outReal = [Float](repeating: 0, count: fftN)
-        var outImag = [Float](repeating: 0, count: fftN)
-        var mags = [Float](repeating: 0, count: fftN / 2)
-
-        let windows = computeWindows(
-            mono: mono,
-            sampleRate: sampleRate,
-            winN: winN,
-            hopN: hopN,
-            dftSetup: dftSetup,
-            hann: hann,
-            real: &real,
-            imag: &imag,
-            outReal: &outReal,
-            outImag: &outImag,
-            mags: &mags
-        )
 
         // Dynamic silence threshold: relative to a conservative noise floor estimate,
         // but never more aggressive than -45 dBFS.
         let silenceThresholdDB: Double = {
-            guard !windows.isEmpty else { return -50 }
+            guard !windows.isEmpty else { return config.silenceFallbackDB }
             let rmsSorted = windows.map { $0.rmsDB }.sorted()
-            let idx = max(0, min(rmsSorted.count - 1, Int((0.15 * Double(rmsSorted.count)).rounded(.down))))
+            let p = max(0.0, min(1.0, config.silenceFloorPercentile))
+            let idx = max(0, min(rmsSorted.count - 1, Int((p * Double(rmsSorted.count)).rounded(.down))))
             let floorDB = rmsSorted[idx]
-            return min(-45.0, max(-70.0, floorDB + 8.0))
+            return min(config.silenceClampMaxDB, max(config.silenceClampMinDB, floorDB + config.silenceFloorAddDB))
         }()
 
         // Classify windows into hop-sized (non-overlapping) marks.
@@ -90,9 +158,9 @@ enum AudioVADHeuristics {
 
             // For talking-head with mild background noise, prefer labeling as speechLike rather than oscillating unknown.
             // Confidence is reduced as the spectrum becomes flatter (more noise-like).
-            let isSpeechBand = (w.centroidHz > 250 && w.centroidHz < 4200)
-            let hasSpeechZCR = (w.zcr > 0.005 && w.zcr < 0.25)
-            let hasVoiceFundamental = (w.dominantHz > 70 && w.dominantHz < 350)
+            let isSpeechBand = (w.centroidHz > config.speechCentroidHzMin && w.centroidHz < config.speechCentroidHzMax)
+            let hasSpeechZCR = (w.zcr > config.speechZCRMin && w.zcr < config.speechZCRMax)
+            let hasVoiceFundamental = (w.dominantHz > config.voiceFundamentalHzMin && w.dominantHz < config.voiceFundamentalHzMax)
 
             if w.rmsDB > silenceThresholdDB && isSpeechBand && hasSpeechZCR {
                 // Map flatness to confidence: flatter → lower confidence.
@@ -100,7 +168,7 @@ enum AudioVADHeuristics {
                 // Dominant bin is a weak heuristic; use as a confidence modifier, not a hard gate.
                 conf = hasVoiceFundamental ? min(0.90, conf + 0.05) : max(0.40, conf - 0.08)
                 marks.append(.init(start: segStart, end: segEnd, kind: .speechLike, conf: conf, w: w))
-            } else if w.rmsDB > silenceThresholdDB && w.flatness < 0.22 && w.centroidHz < 6000 {
+            } else if w.rmsDB > silenceThresholdDB && w.flatness < config.musicFlatnessMax && w.centroidHz < config.musicCentroidHzMax {
                 marks.append(.init(start: segStart, end: segEnd, kind: .musicLike, conf: 0.60, w: w))
             } else {
                 marks.append(.init(start: segStart, end: segEnd, kind: .unknown, conf: 0.40, w: w))
@@ -173,54 +241,29 @@ enum AudioVADHeuristics {
         flushCurrent()
 
         // Suppress short transient musicLike blips (often tonal transients in speech).
-        out = suppressShortMusicLike(in: out, minDurationSeconds: 1.5)
+        out = suppressShortMusicLike(in: out, minDurationSeconds: config.minMusicLikeDurationSeconds)
 
         // Drop tiny segments.
-        return out.filter { ($0.end - $0.start) >= 0.2 }
+        return out.filter { ($0.end - $0.start) >= config.minSegmentDurationSeconds }
     }
 
     /// Builds hop-sized audio frames for downstream beat/emphasis modeling.
     static func frames(
         mono: [Float],
         sampleRate: Double,
-        windowSeconds: Double = 0.5,
-        hopSeconds: Double = 0.25
+        config: VADConfiguration = .default
     ) -> [MasterSensors.AudioFrame] {
         guard sampleRate.isFinite, sampleRate > 1000, !mono.isEmpty else { return [] }
 
-        let win = max(0.1, windowSeconds)
+        let windows = computeWindows(mono: mono, sampleRate: sampleRate, config: config)
+        return frames(from: windows, hopSeconds: config.hopSeconds)
+    }
+
+    static func frames(
+        from windows: [Window],
+        hopSeconds: Double
+    ) -> [MasterSensors.AudioFrame] {
         let hop = max(0.05, hopSeconds)
-
-        let winN = max(256, Int((win * sampleRate).rounded(.toNearestOrAwayFromZero)))
-        let hopN = max(128, Int((hop * sampleRate).rounded(.toNearestOrAwayFromZero)))
-
-        let fftN = 1024
-        let dftSetup = vDSP_DFT_zop_CreateSetup(nil, vDSP_Length(fftN), vDSP_DFT_Direction.FORWARD)
-        defer {
-            if let dftSetup { vDSP_DFT_DestroySetup(dftSetup) }
-        }
-
-        let hann = hannWindow(count: fftN)
-
-        var real = [Float](repeating: 0, count: fftN)
-        var imag = [Float](repeating: 0, count: fftN)
-        var outReal = [Float](repeating: 0, count: fftN)
-        var outImag = [Float](repeating: 0, count: fftN)
-        var mags = [Float](repeating: 0, count: fftN / 2)
-
-        let windows = computeWindows(
-            mono: mono,
-            sampleRate: sampleRate,
-            winN: winN,
-            hopN: hopN,
-            dftSetup: dftSetup,
-            hann: hann,
-            real: &real,
-            imag: &imag,
-            outReal: &outReal,
-            outImag: &outImag,
-            mags: &mags
-        )
 
         func cleanValue(_ v: Double?) -> Double? {
             guard let v, v.isFinite else { return nil }
@@ -316,6 +359,47 @@ enum AudioVADHeuristics {
         }
 
         return out
+    }
+
+    private static func computeWindows(
+        mono: [Float],
+        sampleRate: Double,
+        config: VADConfiguration
+    ) -> [Window] {
+        let win = max(0.1, config.windowSeconds)
+        let hop = max(0.05, config.hopSeconds)
+
+        let winN = max(256, Int((win * sampleRate).rounded(.toNearestOrAwayFromZero)))
+        let hopN = max(128, Int((hop * sampleRate).rounded(.toNearestOrAwayFromZero)))
+
+        // Reuse one DFT setup for the whole pass for performance.
+        let fftN = 1024
+        let dftSetup = vDSP_DFT_zop_CreateSetup(nil, vDSP_Length(fftN), vDSP_DFT_Direction.FORWARD)
+        defer {
+            if let dftSetup { vDSP_DFT_DestroySetup(dftSetup) }
+        }
+
+        let hann = hannWindow(count: fftN)
+
+        var real = [Float](repeating: 0, count: fftN)
+        var imag = [Float](repeating: 0, count: fftN)
+        var outReal = [Float](repeating: 0, count: fftN)
+        var outImag = [Float](repeating: 0, count: fftN)
+        var mags = [Float](repeating: 0, count: fftN / 2)
+
+        return computeWindows(
+            mono: mono,
+            sampleRate: sampleRate,
+            winN: winN,
+            hopN: hopN,
+            dftSetup: dftSetup,
+            hann: hann,
+            real: &real,
+            imag: &imag,
+            outReal: &outReal,
+            outImag: &outImag,
+            mags: &mags
+        )
     }
 
     /// Deterministic beat candidates derived from audioFrames.

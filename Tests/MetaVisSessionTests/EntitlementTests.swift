@@ -21,10 +21,16 @@ final class EntitlementTests: XCTestCase {
     }
     
     func testUnlockCode() {
-        let manager = EntitlementManager(initialPlan: .free)
+        let manager = EntitlementManager(
+            initialPlan: .free,
+            unlockVerifier: { code in
+                // Unit tests inject a deterministic verifier.
+                code == "TEST_UNLOCK" ? .pro : nil
+            }
+        )
         
         // Unlock Pro
-        let success = manager.applyUnlockCode("UNLOCK_PRO_2025")
+        let success = manager.applyUnlockCode("TEST_UNLOCK")
         XCTAssertTrue(success)
         
         // Pro Features

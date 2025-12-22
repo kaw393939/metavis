@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import CoreVideo
 import VideoToolbox
+import os
 import MetaVisCore
 import MetaVisTimeline
 import MetaVisAudio
@@ -9,6 +10,8 @@ import MetaVisSimulation
 
 /// Handles the export of a Timeline to a video file.
 public actor VideoExporter: VideoExporting {
+
+    private nonisolated static let logger = Logger(subsystem: "com.metavis.export", category: "VideoExporter")
     
     private let device: any RenderDevice
     private let trace: any TraceSink
@@ -34,19 +37,12 @@ public actor VideoExporter: VideoExporting {
     }
     
     private nonisolated func logDebug(_ msg: String) {
-        let str = "\(Date()): \(msg)\n"
-        if let data = str.data(using: .utf8) {
-            if let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/metavis_debug.log")) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                try? handle.close()
-            } else {
-                try? str.write(to: URL(fileURLWithPath: "/tmp/metavis_debug.log"), atomically: true, encoding: .utf8)
-            }
+        Task {
+            await trace.record("export.debug", fields: ["msg": msg])
         }
     }
 
-    private static func logPixelBufferSample(_ pixelBuffer: CVPixelBuffer, frameIndex: Int, note: String) {
+    private static func pixelBufferSampleSummary(_ pixelBuffer: CVPixelBuffer, frameIndex: Int, note: String) -> String {
         let fmt = CVPixelBufferGetPixelFormatType(pixelBuffer)
         let w = CVPixelBufferGetWidth(pixelBuffer)
         let h = CVPixelBufferGetHeight(pixelBuffer)
@@ -59,25 +55,16 @@ public actor VideoExporter: VideoExporting {
             (w / 2, h / 2)
         ]
 
-        func appendLog(_ s: String) {
-            if let d = s.data(using: .utf8), let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/metavis_debug.log")) {
-                handle.seekToEndOfFile(); handle.write(d); try? handle.close()
-            } else {
-                try? s.write(to: URL(fileURLWithPath: "/tmp/metavis_debug.log"), atomically: true, encoding: .utf8)
-            }
-        }
-
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
 
         guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else {
-            appendLog("🧪 Frame \(frameIndex) \(note): no base address\n")
-            return
+            return "Frame \(frameIndex) \(note): no base address"
         }
         let bpr = CVPixelBufferGetBytesPerRow(pixelBuffer)
 
         var lines: [String] = []
-        lines.append("🧪 Frame \(frameIndex) \(note): fmt=\(fmt) \(w)x\(h)\n")
+        lines.append("Frame \(frameIndex) \(note): fmt=\(fmt) \(w)x\(h)")
 
         if fmt == kCVPixelFormatType_32BGRA {
             for (x, y) in points {
@@ -85,7 +72,7 @@ public actor VideoExporter: VideoExporting {
                 let py = max(0, min(h - 1, y))
                 let p = base.advanced(by: py * bpr + px * 4).assumingMemoryBound(to: UInt8.self)
                 let b = p[0], g = p[1], r = p[2], a = p[3]
-                lines.append("  (\(px),\(py)) BGRA=(\(b),\(g),\(r),\(a))\n")
+                lines.append("(\(px),\(py)) BGRA=(\(b),\(g),\(r),\(a))")
             }
         } else if fmt == kCVPixelFormatType_64RGBAHalf {
             for (x, y) in points {
@@ -96,13 +83,13 @@ public actor VideoExporter: VideoExporting {
                 let g = Float(Float16(bitPattern: p[1]))
                 let b = Float(Float16(bitPattern: p[2]))
                 let a = Float(Float16(bitPattern: p[3]))
-                lines.append(String(format: "  (%d,%d) RGBAh=(%.4f,%.4f,%.4f,%.4f)\n", px, py, r, g, b, a))
+                lines.append(String(format: "(%d,%d) RGBAh=(%.4f,%.4f,%.4f,%.4f)", px, py, r, g, b, a))
             }
         } else {
-            lines.append("  (unsupported pixel format)\n")
+            lines.append("(unsupported pixel format)")
         }
 
-        appendLog(lines.joined())
+        return lines.joined(separator: " ")
     }
     
     /// Exports the timeline to the specified URL.
@@ -116,7 +103,7 @@ public actor VideoExporter: VideoExporting {
         timeline: Timeline,
         to outputURL: URL,
         quality: QualityProfile,
-        frameRate: Int32 = 24,
+        frameRate: Int = 24,
         codec: AVVideoCodecType = .hevc,
         audioPolicy: AudioPolicy = .auto,
         governance: ExportGovernance = .none
@@ -125,8 +112,9 @@ public actor VideoExporter: VideoExporting {
             timeline: timeline,
             to: outputURL,
             quality: quality,
-            frameRate: Int(frameRate),
+            frameRate: frameRate,
             codec: codec,
+            encodingProfile: nil,
             audioPolicy: audioPolicy,
             governance: governance
         )
@@ -138,6 +126,7 @@ public actor VideoExporter: VideoExporting {
         quality: QualityProfile,
         frameRate: Int = 24,
         codec: AVVideoCodecType = .hevc,
+        encodingProfile: EncodingProfile? = nil,
         audioPolicy: AudioPolicy = .auto,
         governance: ExportGovernance = .none
     ) async throws {
@@ -170,7 +159,8 @@ public actor VideoExporter: VideoExporting {
             }
         
         // 1. Setup Asset Writer
-            let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
+            let fileType: AVFileType = (outputURL.pathExtension.lowercased() == "mp4") ? .mp4 : .mov
+            let writer = try AVAssetWriter(outputURL: outputURL, fileType: fileType)
         
         // Pixel buffer format
         // - HEVC: use BGRA for broad AVFoundation/VideoToolbox compatibility.
@@ -193,20 +183,32 @@ public actor VideoExporter: VideoExporting {
                       compressionProperties[AVVideoProfileLevelKey] = kVTProfileLevel_HEVC_Main10_AutoLevel
                   }
 
-                  // Ensure a sane bitrate floor so very short exports aren't tiny.
-                  let width = exportWidth
-                  let height = quality.resolutionHeight
                   let fps = max(1, frameRate)
-                  let estimatedBitrate = Int(Double(width * height * fps) * 0.08) // ~0.08 bpp for HEVC
-                  let targetBitrate = max(8_000_000, estimatedBitrate)
+
+                  // Default bitrate selection (existing behavior) unless overridden.
+                  let targetBitrate: Int = {
+                      if let encodingProfile {
+                          return max(50_000, encodingProfile.videoAverageBitRate)
+                      }
+                      // Ensure a sane bitrate floor so very short exports aren't tiny.
+                      let width = exportWidth
+                      let height = quality.resolutionHeight
+                      let estimatedBitrate = Int(Double(width * height * fps) * 0.08) // ~0.08 bpp for HEVC
+                      return max(8_000_000, estimatedBitrate)
+                  }()
+
+                  let keyframeInterval: Int = {
+                      if let encodingProfile { return max(1, encodingProfile.maxKeyFrameInterval) }
+                      return fps
+                  }()
 
                   // AVFoundation keys
                   compressionProperties[AVVideoAverageBitRateKey] = targetBitrate
                   compressionProperties[AVVideoExpectedSourceFrameRateKey] = fps
-                                    compressionProperties[AVVideoMaxKeyFrameIntervalKey] = fps
+                  compressionProperties[AVVideoMaxKeyFrameIntervalKey] = keyframeInterval
                   compressionProperties[kVTCompressionPropertyKey_AverageBitRate as String] = targetBitrate
                   compressionProperties[kVTCompressionPropertyKey_ExpectedFrameRate as String] = fps
-                  compressionProperties[kVTCompressionPropertyKey_MaxKeyFrameInterval as String] = fps
+                  compressionProperties[kVTCompressionPropertyKey_MaxKeyFrameInterval as String] = keyframeInterval
                   compressionProperties[kVTCompressionPropertyKey_DataRateLimits as String] = [targetBitrate / 8, 1]
               }
         
@@ -263,9 +265,9 @@ public actor VideoExporter: VideoExporting {
         if includeAudio {
             let audioSettings: [String: Any] = [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVNumberOfChannelsKey: 2,
-                AVSampleRateKey: 48000,
-                AVEncoderBitRateKey: 128000
+                AVNumberOfChannelsKey: encodingProfile?.audioChannelCount ?? 2,
+                AVSampleRateKey: encodingProfile?.audioSampleRate ?? 48000,
+                AVEncoderBitRateKey: encodingProfile?.audioBitRate ?? 128000
             ]
 
             let ai = AVAssetWriterInput(mediaType: .audio, outputSettings: audioSettings)
@@ -435,12 +437,7 @@ public actor VideoExporter: VideoExporting {
             // Periodic breadcrumb so long backpressure doesn't look like a hang.
             if now &- lastLogNanos >= logEveryNanos {
                 let waitedSeconds = Double(now &- start) / 1_000_000_000.0
-                let msg = "⏳ Waiting for \(kind) input readiness (\(String(format: "%.1f", waitedSeconds))s)\n"
-                if let d = msg.data(using: .utf8), let h = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/metavis_debug.log")) {
-                    h.seekToEndOfFile(); h.write(d); try? h.close()
-                } else {
-                    try? msg.write(to: URL(fileURLWithPath: "/tmp/metavis_debug.log"), atomically: true, encoding: .utf8)
-                }
+                VideoExporter.logger.info("Waiting for \(kind, privacy: .public) input readiness (\(String(format: "%.1f", waitedSeconds), privacy: .public)s)")
                 lastLogNanos = now
             }
 
@@ -493,10 +490,7 @@ public actor VideoExporter: VideoExporting {
             if let audioInput {
                 // Task B: Audio (Start First)
                 group.addTask {
-                    let logMsg = "🔊 Audio Task Started\n"
-                    if let data = logMsg.data(using: .utf8), let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/metavis_debug.log")) {
-                        handle.seekToEndOfFile(); handle.write(data); try? handle.close()
-                    }
+                    await trace.record("render.audio.begin", fields: [:])
 
                     let audioRenderer = AudioTimelineRenderer()
                     let sampleRate: Double = 48_000
@@ -533,16 +527,14 @@ public actor VideoExporter: VideoExporting {
                         samplesWritten += Int64(pcmBuffer.frameLength)
                     }
                     audioInput.markAsFinished()
+                    await trace.record("render.audio.end", fields: ["chunks": String(audioCount)])
                     return ("audio", audioCount)
                 }
             }
             
             // Task A: Video
             group.addTask {
-                let logMsg = "📹 Video Task Started\n"
-                 if let data = logMsg.data(using: .utf8), let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/metavis_debug.log")) {
-                    handle.seekToEndOfFile(); handle.write(data); try? handle.close()
-                }
+                await trace.record("render.video.task.begin", fields: [:])
                 
                 let totalFrames = expectedFrames
                 var appended = 0
@@ -616,7 +608,8 @@ public actor VideoExporter: VideoExporting {
                     }
 
                     if i == 0 {
-                        VideoExporter.logPixelBufferSample(buffer, frameIndex: i, note: "pre-append")
+                        let summary = VideoExporter.pixelBufferSampleSummary(buffer, frameIndex: i, note: "pre-append")
+                        await trace.record("export.pixelBuffer.sample", fields: ["frame": String(i), "summary": summary])
                     }
                     
                     if !adaptor.append(buffer, withPresentationTime: presentTime) {
@@ -635,12 +628,10 @@ public actor VideoExporter: VideoExporting {
                         )
                     }
                     
-                    if i % 24 == 0 { 
-                        let msg = "📹 Video Frame \(i)/\(totalFrames)\n"
-                        if let d = msg.data(using: .utf8), let h = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/metavis_debug.log")) { h.seekToEndOfFile(); h.write(d); try? h.close() }
-                     }
+                    // Per-frame logging is intentionally routed through TraceSink via render.video.progress.
                 }
                 input.markAsFinished()
+                await trace.record("render.video.task.end", fields: ["frames": String(appended)])
                 return ("video", appended)
             }
 

@@ -65,12 +65,16 @@ public actor ProjectSession: Identifiable {
     private let aggregator: VisualContextAggregator
 
     // Throttle expensive perception so callers can safely invoke from playback/render loops.
-    private var lastAnalysisWallClock: TimeInterval = 0
+    private var lastAnalysisTime: TimeInterval?
     private let minAnalysisInterval: TimeInterval = 0.2 // ~5Hz
     
     /// The Intelligence Engine (Brain).
-    private let llm: LocalLLMService
+    private let llm: any LLMProvider
     private let intentParser: IntentParser
+
+    // Cancellation: keep only the most recent in-flight intent request.
+    private var currentIntentTask: Task<UserIntent?, Error>?
+    private var currentIntentTaskId: UUID?
 
     private let entitlements: EntitlementManager
 
@@ -79,11 +83,12 @@ public actor ProjectSession: Identifiable {
     public init(
         initialState: ProjectState = ProjectState(),
         entitlements: EntitlementManager = EntitlementManager(),
+        llm: any LLMProvider = LocalLLMService(),
         trace: any TraceSink = NoOpTraceSink()
     ) {
         self.state = initialState
         self.aggregator = VisualContextAggregator()
-        self.llm = LocalLLMService()
+        self.llm = llm
         self.intentParser = IntentParser()
         self.entitlements = entitlements
         self.trace = trace
@@ -92,11 +97,12 @@ public actor ProjectSession: Identifiable {
     public init<R: ProjectRecipe>(
         recipe: R,
         entitlements: EntitlementManager = EntitlementManager(),
+        llm: any LLMProvider = LocalLLMService(),
         trace: any TraceSink = NoOpTraceSink()
     ) {
         self.state = recipe.makeInitialState()
         self.aggregator = VisualContextAggregator()
-        self.llm = LocalLLMService()
+        self.llm = llm
         self.intentParser = IntentParser()
         self.entitlements = entitlements
         self.trace = trace
@@ -240,11 +246,10 @@ public actor ProjectSession: Identifiable {
     /// Triggers analysis of the current frame (e.g., on Pause).
     /// Updates `state.visualContext`.
     public func analyzeFrame(pixelBuffer: CVPixelBuffer, time: TimeInterval) async {
-        let now = Date().timeIntervalSince1970
-        if (now - lastAnalysisWallClock) < minAnalysisInterval {
+        if let last = lastAnalysisTime, (time - last) < minAnalysisInterval {
             return
         }
-        lastAnalysisWallClock = now
+        lastAnalysisTime = time
         do {
             let frame = try await aggregator.analyze(pixelBuffer: pixelBuffer, at: time)
             // Should this be an Undoable Action? 
@@ -262,6 +267,11 @@ public actor ProjectSession: Identifiable {
     public func processCommand(_ text: String) async throws -> UserIntent? {
         await trace.record("intent.process.begin", fields: ["text": text])
 
+        // Cancel any in-flight request; we only care about the most recent user intent.
+        currentIntentTask?.cancel()
+        let taskId = UUID()
+        currentIntentTaskId = taskId
+
         // 1. Build Context (timeline + clip IDs + optional visual context)
         let editingContext = LLMEditingContext.fromTimeline(state.timeline, visualContext: state.visualContext)
         let contextString: String
@@ -272,21 +282,42 @@ public actor ProjectSession: Identifiable {
             contextString = "{}"
         }
 
-        // 2. Request LLM
+        // 2. Request LLM (in a cancellable task)
         let request = LLMRequest(userQuery: text, context: contextString)
-        let response = try await llm.generate(request: request)
+        let task = Task<UserIntent?, Error> { [llm, intentParser, trace] in
+            try Task.checkCancellation()
+            let response = try await llm.generate(request: request)
 
-        // 3. Parse Intent (prefer pre-extracted JSON if available)
-        let textToParse = response.intentJSON ?? response.text
-        let parsed = intentParser.parse(response: textToParse)
-        await trace.record(
-            "intent.process.end",
-            fields: [
-                "hasIntent": parsed == nil ? "false" : "true",
-                "rawWasJSON": response.intentJSON == nil ? "false" : "true"
-            ]
-        )
-        return parsed
+            // 3. Parse Intent (prefer pre-extracted JSON if available)
+            let textToParse = response.intentJSON ?? response.text
+            let parsed = try intentParser.parseValidated(response: textToParse)
+            await trace.record(
+                "intent.process.end",
+                fields: [
+                    "hasIntent": parsed == nil ? "false" : "true",
+                    "rawWasJSON": response.intentJSON == nil ? "false" : "true"
+                ]
+            )
+            return parsed
+        }
+        currentIntentTask = task
+
+        defer {
+            // Only clear if we are still the current request.
+            if currentIntentTaskId == taskId {
+                currentIntentTask = nil
+                currentIntentTaskId = nil
+            }
+        }
+
+        do {
+            let parsed = try await task.value
+            return parsed
+        } catch {
+            // Preserve cancellation semantics for callers.
+            if error is CancellationError { throw error }
+            throw error
+        }
     }
 
     /// Processes a natural language command and applies it (intent -> typed commands -> timeline mutation).

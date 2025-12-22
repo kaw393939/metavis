@@ -3,10 +3,18 @@ import Foundation
 public struct GeminiClient: Sendable {
     private let config: GeminiConfig
     private let urlSession: URLSession
+    private let rateLimiter: TokenBucket?
 
     public init(config: GeminiConfig, urlSession: URLSession = .shared) {
         self.config = config
         self.urlSession = urlSession
+
+        if let rps = config.rateLimitRPS, rps > 0 {
+            let burst = config.rateLimitBurst ?? rps
+            self.rateLimiter = TokenBucket(ratePerSecond: rps, burst: burst)
+        } else {
+            self.rateLimiter = nil
+        }
     }
 
     public func generateText(system: String? = nil, user: String) async throws -> String {
@@ -84,6 +92,9 @@ public struct GeminiClient: Sendable {
         body: Data,
         fallbackBody: GeminiGenerateContentRequest?
     ) async throws -> GeminiGenerateContentResponse {
+        // Optional API rate limiting (configured via env).
+        try await rateLimiter?.acquire(tokens: 1)
+
         var request = baseRequest
         request.httpBody = body
 

@@ -236,16 +236,16 @@ public enum GeminiQC {
         let typeIdentifier = "public.jpeg" as CFString
         #endif
         guard let dest = CGImageDestinationCreateWithData(data, typeIdentifier, 1, nil) else {
-            throw NSError(domain: "MetaVisQC", code: 20, userInfo: [NSLocalizedDescriptionKey: "Failed to create JPEG destination"]) 
+            throw MetaVisQCError.failedToCreateJPEGDestination
         }
         let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
         CGImageDestinationAddImage(dest, cgImage, options as CFDictionary)
         guard CGImageDestinationFinalize(dest) else {
-            throw NSError(domain: "MetaVisQC", code: 21, userInfo: [NSLocalizedDescriptionKey: "Failed to finalize JPEG"]) 
+            throw MetaVisQCError.failedToFinalizeJPEG
         }
         return data as Data
         #else
-        throw NSError(domain: "MetaVisQC", code: 22, userInfo: [NSLocalizedDescriptionKey: "ImageIO not available"]) 
+        throw MetaVisQCError.imageIONotAvailable
         #endif
     }
 

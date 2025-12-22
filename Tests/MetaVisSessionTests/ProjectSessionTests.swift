@@ -84,6 +84,32 @@ final class ProjectSessionTests: XCTestCase {
          XCTAssertEqual(newState.visualContext?.timestamp, 1.5)
          XCTAssertNotNil(newState.visualContext?.subjects)
     }
+
+    func testAnalyzeFrame_throttlesUsingSimulationTime_notWallClock() async {
+        let session = ProjectSession()
+
+        var pixelBuffer: CVPixelBuffer?
+        CVPixelBufferCreate(kCFAllocatorDefault, 16, 16, kCVPixelFormatType_32BGRA, nil, &pixelBuffer)
+        guard let pb = pixelBuffer else {
+            XCTFail("Failed to create pixel buffer")
+            return
+        }
+
+        // First analysis should run.
+        await session.analyzeFrame(pixelBuffer: pb, time: 0.0)
+        let s1 = await session.state
+        XCTAssertEqual(s1.visualContext?.timestamp, 0.0)
+
+        // Too soon in simulation time; should be throttled and NOT update.
+        await session.analyzeFrame(pixelBuffer: pb, time: 0.1)
+        let s2 = await session.state
+        XCTAssertEqual(s2.visualContext?.timestamp, 0.0)
+
+        // Past the interval; should update.
+        await session.analyzeFrame(pixelBuffer: pb, time: 0.3)
+        let s3 = await session.state
+        XCTAssertEqual(s3.visualContext?.timestamp, 0.3)
+    }
     
     func testProcessCommand() async throws {
         let session = ProjectSession()
@@ -98,5 +124,61 @@ final class ProjectSessionTests: XCTestCase {
         
         XCTAssertEqual(intent.action, .colorGrade)
         XCTAssertEqual(intent.target, "shirt")
+    }
+
+    func testProcessCommand_cancelsStaleRequests() async throws {
+        let provider = DeterministicLLMProvider { req in
+            if req.userQuery == "slow" {
+                // Long enough that a second request can arrive and cancel this one.
+                try await Task.sleep(nanoseconds: 300_000_000)
+                return LLMResponse(text: "{\"action\":\"cut\",\"target\":\"clip\",\"params\":{}}", intentJSON: nil, latency: 0)
+            }
+            // Fast response with a valid intent JSON.
+            return LLMResponse(text: "{\"action\":\"cut\",\"target\":\"clip\",\"params\":{}}", intentJSON: nil, latency: 0)
+        }
+
+        let session = ProjectSession(llm: provider)
+
+        let slowTask = Task { try await session.processCommand("slow") }
+
+        // Give the slow request time to start.
+        try await Task.sleep(nanoseconds: 20_000_000)
+
+        // New request should cancel the in-flight one.
+        let intent = try await session.processCommand("fast")
+        XCTAssertEqual(intent?.action, .cut)
+
+        do {
+            _ = try await slowTask.value
+            XCTFail("Expected slow request to be cancelled")
+        } catch is CancellationError {
+            // expected
+        }
+    }
+
+    func testProcessCommand_includesVisualContextInLLMRequestContext() async throws {
+        let provider = DeterministicLLMProvider { _ in
+            // Return any valid intent JSON; we only care about what context was sent.
+            LLMResponse(text: "{\"action\":\"cut\",\"target\":\"clip\",\"params\":{}}", intentJSON: nil, latency: 0)
+        }
+
+        let session = ProjectSession(llm: provider)
+
+        // Ensure visualContext exists.
+        var pixelBuffer: CVPixelBuffer?
+        CVPixelBufferCreate(kCFAllocatorDefault, 16, 16, kCVPixelFormatType_32BGRA, nil, &pixelBuffer)
+        guard let pb = pixelBuffer else {
+            XCTFail("Failed to create pixel buffer")
+            return
+        }
+        await session.analyzeFrame(pixelBuffer: pb, time: 1.0)
+
+        _ = try await session.processCommand("cut the clip")
+
+        guard let last = await provider.lastSeenRequest() else {
+            XCTFail("Expected provider to receive a request")
+            return
+        }
+        XCTAssertTrue(last.context.contains("\"visualContext\""))
     }
 }

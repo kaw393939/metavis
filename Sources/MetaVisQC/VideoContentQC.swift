@@ -300,17 +300,17 @@ public enum VideoContentQC {
         let finalImage = moved.cropped(to: finalRect)
 
         guard let cg = ciContext.createCGImage(finalImage, from: finalRect) else {
-            throw NSError(domain: "MetaVisQC", code: 41, userInfo: [NSLocalizedDescriptionKey: "Failed to create 8x8 CGImage"])
+            throw MetaVisQCError.failedToCreate8x8CGImage
         }
         guard let cfData = cg.dataProvider?.data else {
-            throw NSError(domain: "MetaVisQC", code: 42, userInfo: [NSLocalizedDescriptionKey: "Missing CGImage pixel data"])
+            throw MetaVisQCError.missingCGImagePixelData
         }
 
         let data = cfData as Data
         let bytes = [UInt8](data)
         let bytesPerPixel = 4
         guard bytes.count >= Int(targetW * targetH) * bytesPerPixel else {
-            throw NSError(domain: "MetaVisQC", code: 43, userInfo: [NSLocalizedDescriptionKey: "Unexpected CGImage pixel data size"])
+            throw MetaVisQCError.unexpectedCGImagePixelDataSize
         }
 
         var luma: [UInt8] = []
@@ -347,17 +347,17 @@ public enum VideoContentQC {
         let finalImage = moved.cropped(to: finalRect)
 
         guard let cg = ciContext.createCGImage(finalImage, from: finalRect) else {
-            throw NSError(domain: "MetaVisQC", code: 51, userInfo: [NSLocalizedDescriptionKey: "Failed to create downsampled CGImage"])
+            throw MetaVisQCError.failedToCreateDownsampledCGImage
         }
         guard let cfData = cg.dataProvider?.data else {
-            throw NSError(domain: "MetaVisQC", code: 52, userInfo: [NSLocalizedDescriptionKey: "Missing CGImage pixel data"])
+            throw MetaVisQCError.missingCGImagePixelData
         }
 
         let data = cfData as Data
         let bytes = [UInt8](data)
         let bytesPerPixel = 4
         guard bytes.count >= dim * dim * bytesPerPixel else {
-            throw NSError(domain: "MetaVisQC", code: 53, userInfo: [NSLocalizedDescriptionKey: "Unexpected CGImage pixel data size"])
+            throw MetaVisQCError.unexpectedCGImagePixelDataSize
         }
 
         var luma: [UInt8] = []
@@ -387,12 +387,7 @@ public enum VideoContentQC {
             let (cur, curFP) = fps[i]
             let d = prevFP.distance(to: curFP)
             if d < minDistance {
-                let dStr = String(format: "%.5f", d)
-                throw NSError(
-                    domain: "MetaVisQC",
-                    code: 30,
-                    userInfo: [NSLocalizedDescriptionKey: "Frames too similar (d=\(dStr)) between \(prev) and \(cur). Possible stuck source."]
-                )
+                throw MetaVisQCError.framesTooSimilar(distance: d, previousLabel: prev, currentLabel: cur)
             }
         }
     }
@@ -502,11 +497,7 @@ public enum VideoContentQC {
 
             // Coarse validation.
             if !(meanLuma >= s.minMeanLuma && meanLuma <= s.maxMeanLuma) {
-                throw NSError(
-                    domain: "MetaVisQC",
-                    code: 40,
-                    userInfo: [NSLocalizedDescriptionKey: "Mean luma out of range for \(s.label): \(meanLuma) not in [\(s.minMeanLuma), \(s.maxMeanLuma)]"]
-                )
+                throw MetaVisQCError.meanLumaOutOfRange(label: s.label, meanLuma: meanLuma, min: s.minMeanLuma, max: s.maxMeanLuma)
             }
 
             let dRG = abs(meanRGB.x - meanRGB.y)
@@ -514,27 +505,15 @@ public enum VideoContentQC {
             let dRB = abs(meanRGB.x - meanRGB.z)
             let maxDelta = max(dRG, max(dGB, dRB))
             if maxDelta > s.maxChannelDelta {
-                throw NSError(
-                    domain: "MetaVisQC",
-                    code: 41,
-                    userInfo: [NSLocalizedDescriptionKey: "Average RGB not neutral enough for \(s.label): maxΔ=\(maxDelta) > \(s.maxChannelDelta)"]
-                )
+                throw MetaVisQCError.averageRGBNotNeutralEnough(label: s.label, maxDelta: maxDelta, allowed: s.maxChannelDelta)
             }
 
             if lowFrac < s.minLowLumaFraction {
-                throw NSError(
-                    domain: "MetaVisQC",
-                    code: 42,
-                    userInfo: [NSLocalizedDescriptionKey: "Too little low-luma content for \(s.label): \(lowFrac) < \(s.minLowLumaFraction)"]
-                )
+                throw MetaVisQCError.tooLittleLowLumaContent(label: s.label, fraction: lowFrac, min: s.minLowLumaFraction)
             }
 
             if highFrac < s.minHighLumaFraction {
-                throw NSError(
-                    domain: "MetaVisQC",
-                    code: 43,
-                    userInfo: [NSLocalizedDescriptionKey: "Too little high-luma content for \(s.label): \(highFrac) < \(s.minHighLumaFraction)"]
-                )
+                throw MetaVisQCError.tooLittleHighLumaContent(label: s.label, fraction: highFrac, min: s.minHighLumaFraction)
             }
 
             out.append(ColorStatsResult(
@@ -567,7 +546,7 @@ public enum VideoContentQC {
             return try fingerprintCPU(cgImage: cg)
         }
 
-        throw NSError(domain: "MetaVisQC", code: 32, userInfo: [NSLocalizedDescriptionKey: "Failed to compute fingerprint (Metal unavailable + CVPixelBuffer->CGImage conversion failed)"])
+        throw MetaVisQCError.failedToComputeFingerprint
     }
 
     private static func fingerprint(cgImage: CGImage) throws -> Fingerprint {
@@ -604,7 +583,7 @@ public enum VideoContentQC {
             space: colorSpace,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else {
-            throw NSError(domain: "MetaVisQC", code: 31, userInfo: [NSLocalizedDescriptionKey: "Failed to create CGContext"])
+            throw MetaVisQCError.failedToCreateCGContext
         }
 
         ctx.interpolationQuality = .medium
@@ -678,14 +657,14 @@ public enum VideoContentQC {
             &pb
         )
         guard status == kCVReturnSuccess, let pb else {
-            throw NSError(domain: "MetaVisQC", code: 44, userInfo: [NSLocalizedDescriptionKey: "CVPixelBufferCreate failed (\(status))"])
+            throw MetaVisQCError.cvPixelBufferCreateFailed(status: status)
         }
 
         CVPixelBufferLockBaseAddress(pb, [])
         defer { CVPixelBufferUnlockBaseAddress(pb, []) }
 
         guard let base = CVPixelBufferGetBaseAddress(pb) else {
-            throw NSError(domain: "MetaVisQC", code: 45, userInfo: [NSLocalizedDescriptionKey: "No pixel buffer base address"])
+            throw MetaVisQCError.noPixelBufferBaseAddress
         }
 
         let bytesPerRow = CVPixelBufferGetBytesPerRow(pb)
@@ -701,7 +680,7 @@ public enum VideoContentQC {
             space: colorSpace,
             bitmapInfo: bitmapInfo.rawValue
         ) else {
-            throw NSError(domain: "MetaVisQC", code: 46, userInfo: [NSLocalizedDescriptionKey: "Failed to create CGContext"])
+            throw MetaVisQCError.failedToCreateCGContext
         }
 
         ctx.interpolationQuality = .medium

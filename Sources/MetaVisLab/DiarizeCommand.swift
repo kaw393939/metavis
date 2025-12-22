@@ -121,6 +121,11 @@ enum DiarizeCommand {
         let outWordsURL = options.outputDirURL.appendingPathComponent("transcript.words.v1.jsonl")
         try writeTranscriptWordsJSONL(to: outWordsURL, words: diarizedWords)
 
+        // 1b) Write governed attribution confidence sidecar.
+        let attributionURL = options.outputDirURL.appendingPathComponent("transcript.attribution.v1.jsonl")
+        let attributions = buildAttributionRecords(words: diarizedWords, sensors: sensors)
+        try writeTranscriptAttributionsJSONL(to: attributionURL, records: attributions)
+
         // 2) Write captions.vtt with <v Speaker> tags.
         let cues = cuesFromWords(diarizedWords)
         let captionsURL = options.outputDirURL.appendingPathComponent("captions.vtt")
@@ -128,13 +133,60 @@ enum DiarizeCommand {
 
         // 3) Write speaker map.
         let mapURL = options.outputDirURL.appendingPathComponent("speaker_map.v1.json")
+        var deterministicMap = diarizedMap
+        deterministicMap.createdAt = Date(timeIntervalSince1970: 0)
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         enc.dateEncodingStrategy = .iso8601
-        let mapData = try enc.encode(diarizedMap)
+        let mapData = try enc.encode(deterministicMap)
         try mapData.write(to: mapURL, options: [.atomic])
 
-        print("diarize: wrote \(outWordsURL.lastPathComponent), \(captionsURL.lastPathComponent), \(mapURL.lastPathComponent)")
+        // 4) Write temporal context (v1).
+        let temporalURL = options.outputDirURL.appendingPathComponent("temporal.context.v1.json")
+        let temporal = TemporalContextAggregator.aggregate(sensors: sensors, words: diarizedWords)
+        let temporalData = try enc.encode(temporal)
+        try temporalData.write(to: temporalURL, options: [.atomic])
+
+        // 5) Write identity bindings (v1).
+        let bindingsURL = options.outputDirURL.appendingPathComponent("identity.bindings.v1.json")
+        let bindings = IdentityBindingGraphBuilder.build(sensors: sensors, words: diarizedWords)
+        let bindingsData = try enc.encode(bindings)
+        try bindingsData.write(to: bindingsURL, options: [.atomic])
+
+        // 5b) Write identity timeline spine (v1).
+        let timelineURL = options.outputDirURL.appendingPathComponent("identity.timeline.v1.json")
+        let timeline = IdentityTimelineBuilder.build(
+            sensors: sensors,
+            diarizedWords: diarizedWords,
+            attributions: attributions,
+            bindings: bindings
+        )
+        let timelineData = try enc.encode(timeline)
+        try timelineData.write(to: timelineURL, options: [.atomic])
+
+        // 6) Write bounded semantic frames for LLM consumption (v2).
+        let semanticURL = options.outputDirURL.appendingPathComponent("semantic.frame.v2.jsonl")
+        let semanticFrames = SemanticFrameV2Builder.buildAll(
+            sensors: sensors,
+            diarizedWords: diarizedWords,
+            bindings: bindings
+        )
+        try writeSemanticFramesV2JSONL(to: semanticURL, frames: semanticFrames)
+
+        print("diarize: wrote \(outWordsURL.lastPathComponent), \(attributionURL.lastPathComponent), \(captionsURL.lastPathComponent), \(mapURL.lastPathComponent), \(temporalURL.lastPathComponent), \(bindingsURL.lastPathComponent), \(timelineURL.lastPathComponent), \(semanticURL.lastPathComponent)")
+    }
+
+    private static func writeSemanticFramesV2JSONL(to url: URL, frames: [SemanticFrameV2]) throws {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.sortedKeys]
+        var out = ""
+        out.reserveCapacity(frames.count * 256)
+        for f in frames {
+            let data = try enc.encode(f)
+            out.append(String(decoding: data, as: UTF8.self))
+            out.append("\n")
+        }
+        try out.write(to: url, atomically: true, encoding: .utf8)
     }
 
     private struct Options {
@@ -218,6 +270,176 @@ enum DiarizeCommand {
 
         for w in words {
             let line = try enc.encode(w)
+            out.append(line)
+            out.append(0x0A)
+        }
+
+        try out.write(to: url, options: [.atomic])
+    }
+
+    private static func buildAttributionRecords(words: [TranscriptWordV1], sensors: MasterSensors) -> [TranscriptAttributionV1] {
+        func ticksForTiming(_ w: TranscriptWordV1) -> (start: Int64, end: Int64) {
+            let start = w.timelineTimeTicks ?? w.sourceTimeTicks
+            let end = w.timelineTimeEndTicks ?? w.sourceTimeEndTicks
+            return (start: start, end: max(start, end))
+        }
+
+        func midSeconds(startTicks: Int64, endTicks: Int64) -> Double {
+            let midTicks = startTicks + (max(Int64(0), endTicks - startTicks) / 2)
+            return Double(midTicks) / 60000.0
+        }
+
+        // Video sample lookup window: half stride with a small minimum to tolerate drift.
+        let stride = max(0.01, sensors.sampling.videoStrideSeconds)
+        let sampleWindow = max(0.12, (stride / 2.0) + 0.02)
+
+        func nearestSample(at t: Double) -> (sample: MasterSensors.VideoSample?, dt: Double) {
+            var best: MasterSensors.VideoSample?
+            var bestDt = Double.greatestFiniteMagnitude
+            for s in sensors.videoSamples {
+                let dt = abs(s.time - t)
+                if dt < bestDt {
+                    bestDt = dt
+                    best = s
+                }
+            }
+            return (best, bestDt)
+        }
+
+        func faceScore(_ f: MasterSensors.Face) -> Double {
+            let r = f.rect
+            let area = max(0.0, Double(r.width * r.height))
+            let cx = Double(r.midX)
+            let cy = Double(r.midY)
+            let dx = cx - 0.5
+            let dy = cy - 0.5
+            let dist = sqrt(dx * dx + dy * dy) // 0..~0.707
+            let center = max(0.0, 1.0 - (dist / 0.70710678))
+            // Area dominates; center proximity is a weak tiebreaker.
+            return area + (0.05 * center)
+        }
+
+        func attributionConfidence(for w: TranscriptWordV1) -> ConfidenceRecordV1 {
+            guard let speakerId = w.speakerId else {
+                return ConfidenceRecordV1(
+                    score: 0.0,
+                    grade: .INVALID,
+                    sources: [.audio],
+                    reasons: [.audio_silence],
+                    evidenceRefs: [],
+                    policyId: nil
+                )
+            }
+
+            func speechLikeConfidence(at t: Double) -> Double? {
+                // Choose the highest-confidence speechLike segment that covers this time.
+                var best: Double? = nil
+                for seg in sensors.audioSegments {
+                    guard seg.kind == .speechLike else { continue }
+                    guard t >= seg.start, t <= seg.end else { continue }
+                    let c = max(0.0, min(1.0, seg.confidence))
+                    if best == nil || c > best! { best = c }
+                }
+                return best
+            }
+
+            let timing = ticksForTiming(w)
+            let t = midSeconds(startTicks: timing.start, endTicks: timing.end)
+
+            let (sample, dt) = nearestSample(at: t)
+            let faces: [MasterSensors.Face]
+            if let sample, dt <= sampleWindow {
+                faces = sample.faces
+            } else {
+                faces = []
+            }
+
+            if speakerId == "OFFSCREEN" {
+                if faces.isEmpty {
+                    return ConfidenceRecordV1.evidence(
+                        score: 0.55,
+                        sources: [.vision],
+                        reasons: [.no_face_detected, .offscreen_forced],
+                        evidenceRefs: []
+                    )
+                }
+                return ConfidenceRecordV1.evidence(
+                    score: 0.55,
+                    sources: [.audio],
+                    reasons: [.low_audio_similarity, .offscreen_forced],
+                    evidenceRefs: []
+                )
+            }
+
+            // speakerId values are diarization speaker IDs (often audio cluster IDs like C1/C2).
+            // Confidence here is for attribution to that speakerId, not for binding to a specific face.
+            // We still expose binding uncertainty as reasons when multiple faces are present.
+            let segConf = speechLikeConfidence(at: t)
+            if segConf == nil {
+                // Not in a speech-like region: attribution is likely unstable.
+                var reasons: [ReasonCodeV1] = [.audio_silence]
+                if faces.isEmpty { reasons.append(.no_face_detected) }
+                return ConfidenceRecordV1.evidence(
+                    score: 0.30,
+                    sources: [.audio],
+                    reasons: reasons,
+                    evidenceRefs: []
+                )
+            }
+
+            let c = segConf ?? 0.0
+            let baseScore: Float
+            if c >= 0.85 {
+                baseScore = 0.92
+            } else if c >= 0.70 {
+                baseScore = 0.88
+            } else {
+                baseScore = 0.82
+            }
+
+            var reasons: [ReasonCodeV1] = []
+            var sources: [ConfidenceSourceV1] = [.audio]
+            var evidenceRefs: [EvidenceRefV1] = [.metric("audioSegment.confidence", value: c)]
+
+            if faces.isEmpty {
+                // Can't bind to on-screen identity at this moment.
+                reasons.append(.no_face_detected)
+            } else {
+                sources = [.fused]
+                evidenceRefs.append(.metric("video.faces.count", value: Double(faces.count)))
+                if faces.count >= 2 {
+                    reasons.append(.multiple_faces_competing)
+                    reasons.append(.speaker_binding_missing)
+                }
+            }
+
+            return ConfidenceRecordV1.evidence(
+                score: baseScore,
+                sources: sources,
+                reasons: reasons,
+                evidenceRefs: evidenceRefs
+            )
+        }
+
+        return words.map { w in
+            TranscriptAttributionV1(
+                wordId: w.wordId,
+                speakerId: w.speakerId,
+                speakerLabel: w.speakerLabel,
+                attributionConfidence: attributionConfidence(for: w)
+            )
+        }
+    }
+
+    private static func writeTranscriptAttributionsJSONL(to url: URL, records: [TranscriptAttributionV1]) throws {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.sortedKeys]
+
+        var out = Data()
+        out.reserveCapacity(records.count * 220)
+
+        for r in records {
+            let line = try enc.encode(r)
             out.append(line)
             out.append(0x0A)
         }

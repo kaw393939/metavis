@@ -220,4 +220,34 @@ public struct Timeline: Codable, Sendable, Identifiable, Equatable {
         self.tracks = tracks
         self.duration = duration
     }
+
+    public enum ValidationIssue: Sendable, Equatable {
+        case overlappingClips(trackId: UUID, trackName: String, a: UUID, b: UUID)
+    }
+
+    /// Returns validation issues for the timeline model.
+    /// Currently checks: overlapping clips within a track.
+    public func validate() -> [ValidationIssue] {
+        var issues: [ValidationIssue] = []
+        issues.reserveCapacity(4)
+
+        for track in tracks {
+            // Sort by time so we only need to check neighbors.
+            let sorted = track.clips.sorted {
+                if $0.startTime != $1.startTime { return $0.startTime < $1.startTime }
+                // Deterministic tie-breaker.
+                return $0.id.uuidString < $1.id.uuidString
+            }
+
+            for i in 1..<sorted.count {
+                let prev = sorted[i - 1]
+                let cur = sorted[i]
+                if prev.overlaps(with: cur) {
+                    issues.append(.overlappingClips(trackId: track.id, trackName: track.name, a: prev.id, b: cur.id))
+                }
+            }
+        }
+
+        return issues
+    }
 }

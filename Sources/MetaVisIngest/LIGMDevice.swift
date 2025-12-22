@@ -26,8 +26,12 @@ public actor LIGMDevice: VirtualDevice {
             parameters: ["prompt": "String"]
         )
     ]
-    
-    public init() {}
+
+    private let plugins: [any GenerativeSourcePlugin]
+
+    public init(plugins: [any GenerativeSourcePlugin] = [NoiseGeneratorPlugin()]) {
+        self.plugins = plugins
+    }
     
     public func perform(action: String, with params: [String : NodeValue]) async throws -> [String : NodeValue] {
         guard action == "generate" else {
@@ -38,6 +42,11 @@ public actor LIGMDevice: VirtualDevice {
             throw NSError(domain: "DeviceError", code: 400, userInfo: [NSLocalizedDescriptionKey: "Missing prompt"])
         }
         
+        // Route to the first matching plugin.
+        if let plugin = plugins.first(where: { $0.canHandle(action: action, params: params) }) {
+            return try await plugin.perform(action: action, params: params)
+        }
+
         // Simulate Generation Delay
         try? await Task.sleep(nanoseconds: 10_000_000) // 10ms
         

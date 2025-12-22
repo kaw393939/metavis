@@ -8,10 +8,16 @@ public struct AskTheExpert: Sendable {
         self.device = device
     }
 
-    public func ask(prompt: String, system: String? = nil) async throws -> String {
+    public func ask(prompt: String, system: String? = nil, imageData: Data? = nil, imageMimeType: String? = nil) async throws -> String {
         var params: [String: NodeValue] = ["prompt": .string(prompt)]
         if let system {
             params["system"] = .string(system)
+        }
+        if let imageData {
+            params["imageData"] = .data(imageData)
+        }
+        if let imageMimeType {
+            params["imageMimeType"] = .string(imageMimeType)
         }
         let out = try await device.perform(action: "ask_expert", with: params)
         guard case .string(let text)? = out["text"] else {

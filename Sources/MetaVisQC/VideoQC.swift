@@ -3,6 +3,65 @@ import AVFoundation
 import MetaVisCore
 
 public enum VideoQC {
+    public enum QCError: Error, LocalizedError, Sendable {
+        case missingMovie(path: String)
+        case nonFiniteDuration
+        case durationOutOfRange(actualSeconds: Double, minSeconds: Double, maxSeconds: Double)
+        case noVideoTrack
+        case resolutionMismatch(actualWidth: Int, actualHeight: Int, expectedWidth: Int, expectedHeight: Int)
+        case fpsMismatch(actualFPS: Float, expectedFPS: Double)
+        case tooFewVideoSamples(actual: Int, minExpected: Int)
+
+        case expectedAudioTrackMissing
+        case noAudioTrack
+
+        case cannotAddAudioReaderOutput
+        case audioReaderFailedToStart(underlying: String?)
+        case audioReaderFailed(underlying: String?)
+        case audioAppearsSilent(peak: Float, minPeak: Float)
+
+        case cannotAddVideoReaderOutput
+        case videoReaderFailedToStart(underlying: String?)
+        case videoReaderFailed(underlying: String?)
+
+        public var errorDescription: String? {
+            switch self {
+            case .missingMovie(let path):
+                return "Missing movie at \(path)"
+            case .nonFiniteDuration:
+                return "Non-finite duration"
+            case .durationOutOfRange(let actual, let min, let max):
+                return "Duration out of range: \(actual)s (expected \(min)s..\(max)s)"
+            case .noVideoTrack:
+                return "No video track"
+            case .resolutionMismatch(let w, let h, let ew, let eh):
+                return "Resolution mismatch: \(w)x\(h) (expected \(ew)x\(eh))"
+            case .fpsMismatch(let actual, let expected):
+                return "FPS mismatch: \(actual) (expected ~\(expected))"
+            case .tooFewVideoSamples(let actual, let min):
+                return "Too few video samples: \(actual) (min \(min))"
+            case .expectedAudioTrackMissing:
+                return "Expected an audio track, found none"
+            case .noAudioTrack:
+                return "No audio track"
+            case .cannotAddAudioReaderOutput:
+                return "Cannot add audio reader output"
+            case .audioReaderFailedToStart(let underlying):
+                return underlying.map { "Audio reader failed to start: \($0)" } ?? "Audio reader failed to start"
+            case .audioReaderFailed(let underlying):
+                return underlying.map { "Audio reader failed: \($0)" } ?? "Audio reader failed"
+            case .audioAppearsSilent(let peak, let minPeak):
+                return "Audio appears silent (peak=\(peak), minPeak=\(minPeak))"
+            case .cannotAddVideoReaderOutput:
+                return "Cannot add video reader output"
+            case .videoReaderFailedToStart(let underlying):
+                return underlying.map { "Video reader failed to start: \($0)" } ?? "Video reader failed to start"
+            case .videoReaderFailed(let underlying):
+                return underlying.map { "Video reader failed: \($0)" } ?? "Video reader failed"
+            }
+        }
+    }
+
     public struct Expectations: Sendable {
         public var minDurationSeconds: Double
         public var maxDurationSeconds: Double
@@ -54,7 +113,7 @@ public enum VideoQC {
 
     public static func validateMovie(at url: URL, expectations: Expectations) async throws -> Report {
         guard FileManager.default.fileExists(atPath: url.path) else {
-            throw NSError(domain: "MetaVisQC", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing movie at \(url.path)"])
+            throw QCError.missingMovie(path: url.path)
         }
 
         let asset = AVURLAsset(url: url)
@@ -62,15 +121,19 @@ public enum VideoQC {
         let durationSeconds = CMTimeGetSeconds(durationTime)
 
         guard durationSeconds.isFinite else {
-            throw NSError(domain: "MetaVisQC", code: 2, userInfo: [NSLocalizedDescriptionKey: "Non-finite duration"])
+            throw QCError.nonFiniteDuration
         }
         guard durationSeconds >= expectations.minDurationSeconds, durationSeconds <= expectations.maxDurationSeconds else {
-            throw NSError(domain: "MetaVisQC", code: 3, userInfo: [NSLocalizedDescriptionKey: "Duration out of range: \(durationSeconds)s"])
+            throw QCError.durationOutOfRange(
+                actualSeconds: durationSeconds,
+                minSeconds: expectations.minDurationSeconds,
+                maxSeconds: expectations.maxDurationSeconds
+            )
         }
 
         let videoTracks = try await asset.loadTracks(withMediaType: .video)
         guard let videoTrack = videoTracks.first else {
-            throw NSError(domain: "MetaVisQC", code: 4, userInfo: [NSLocalizedDescriptionKey: "No video track"])
+            throw QCError.noVideoTrack
         }
 
         let nominalFrameRate = try await videoTrack.load(.nominalFrameRate)
@@ -84,20 +147,25 @@ public enum VideoQC {
         let height = Int(abs(transformed.height).rounded())
 
         guard width == expectations.expectedWidth, height == expectations.expectedHeight else {
-            throw NSError(domain: "MetaVisQC", code: 5, userInfo: [NSLocalizedDescriptionKey: "Resolution mismatch: \(width)x\(height)"])
+            throw QCError.resolutionMismatch(
+                actualWidth: width,
+                actualHeight: height,
+                expectedWidth: expectations.expectedWidth,
+                expectedHeight: expectations.expectedHeight
+            )
         }
 
         // Frame rate can be reported as 0 for some assets; enforce if non-zero.
         if nominalFrameRate > 0 {
             let delta = abs(Double(nominalFrameRate) - expectations.expectedNominalFrameRate)
             if delta > 0.5 {
-                throw NSError(domain: "MetaVisQC", code: 6, userInfo: [NSLocalizedDescriptionKey: "FPS mismatch: \(nominalFrameRate)"])
+                throw QCError.fpsMismatch(actualFPS: nominalFrameRate, expectedFPS: expectations.expectedNominalFrameRate)
             }
         }
 
         let sampleCount = try countVideoSamples(asset: asset, track: videoTrack)
         guard sampleCount >= expectations.minVideoSampleCount else {
-            throw NSError(domain: "MetaVisQC", code: 7, userInfo: [NSLocalizedDescriptionKey: "Too few video samples: \(sampleCount)"])
+            throw QCError.tooFewVideoSamples(actual: sampleCount, minExpected: expectations.minVideoSampleCount)
         }
 
         return Report(
@@ -136,7 +204,7 @@ public enum VideoQC {
         let asset = AVURLAsset(url: url)
         let audioTracks = try await asset.loadTracks(withMediaType: .audio)
         if audioTracks.isEmpty {
-            throw NSError(domain: "MetaVisQC", code: 8, userInfo: [NSLocalizedDescriptionKey: "Expected an audio track, found none"])
+            throw QCError.expectedAudioTrackMissing
         }
     }
 
@@ -145,7 +213,7 @@ public enum VideoQC {
         let asset = AVURLAsset(url: url)
         let audioTracks = try await asset.loadTracks(withMediaType: .audio)
         guard let track = audioTracks.first else {
-            throw NSError(domain: "MetaVisQC", code: 9, userInfo: [NSLocalizedDescriptionKey: "No audio track"])
+            throw QCError.noAudioTrack
         }
 
         let reader = try AVAssetReader(asset: asset)
@@ -161,12 +229,12 @@ public enum VideoQC {
         ])
         output.alwaysCopiesSampleData = false
         guard reader.canAdd(output) else {
-            throw NSError(domain: "MetaVisQC", code: 10, userInfo: [NSLocalizedDescriptionKey: "Cannot add audio reader output"])
+            throw QCError.cannotAddAudioReaderOutput
         }
         reader.add(output)
 
         guard reader.startReading() else {
-            throw reader.error ?? NSError(domain: "MetaVisQC", code: 11, userInfo: [NSLocalizedDescriptionKey: "Audio reader failed to start"])
+            throw QCError.audioReaderFailedToStart(underlying: reader.error?.localizedDescription)
         }
 
         var peak: Float = 0
@@ -192,11 +260,11 @@ public enum VideoQC {
         }
 
         if reader.status == .failed {
-            throw reader.error ?? NSError(domain: "MetaVisQC", code: 12, userInfo: [NSLocalizedDescriptionKey: "Audio reader failed"])
+            throw QCError.audioReaderFailed(underlying: reader.error?.localizedDescription)
         }
 
         if peak < minPeak {
-            throw NSError(domain: "MetaVisQC", code: 13, userInfo: [NSLocalizedDescriptionKey: "Audio appears silent (peak=\(peak))"])
+            throw QCError.audioAppearsSilent(peak: peak, minPeak: minPeak)
         }
     }
 
@@ -208,12 +276,12 @@ public enum VideoQC {
         output.alwaysCopiesSampleData = false
 
         guard reader.canAdd(output) else {
-            throw NSError(domain: "MetaVisQC", code: 10, userInfo: [NSLocalizedDescriptionKey: "Cannot add reader output"])
+            throw QCError.cannotAddVideoReaderOutput
         }
         reader.add(output)
 
         guard reader.startReading() else {
-            throw reader.error ?? NSError(domain: "MetaVisQC", code: 11, userInfo: [NSLocalizedDescriptionKey: "Reader failed to start"])
+            throw QCError.videoReaderFailedToStart(underlying: reader.error?.localizedDescription)
         }
 
         var count = 0
@@ -227,7 +295,7 @@ public enum VideoQC {
         }
 
         if reader.status == .failed {
-            throw reader.error ?? NSError(domain: "MetaVisQC", code: 12, userInfo: [NSLocalizedDescriptionKey: "Reader failed"])
+            throw QCError.videoReaderFailed(underlying: reader.error?.localizedDescription)
         }
 
         return count
