@@ -41,7 +41,11 @@ enum NebulaDebugCommand {
 
         // Graph: depth_one -> fx_volumetric_nebula -> odt_acescg_to_rec709
         func renderNebula(debugMode: Double, name: String) async throws {
-            let depth = RenderNode(name: "DepthOne", shader: "depth_one")
+            let depth = RenderNode(
+                name: "DepthOne",
+                shader: "depth_one",
+                output: RenderNode.OutputSpec(resolution: .full, pixelFormat: .depth32Float)
+            )
             let nebula = RenderNode(
                 name: "Nebula",
                 shader: "fx_volumetric_nebula",
@@ -128,7 +132,11 @@ enum NebulaDebugCommand {
 
         // Star–medium interaction validation: starfield -> composite with nebula -> odt.
         do {
-            let depth = RenderNode(name: "DepthOne", shader: "depth_one")
+            let depth = RenderNode(
+                name: "DepthOne",
+                shader: "depth_one",
+                output: RenderNode.OutputSpec(resolution: .full, pixelFormat: .depth32Float)
+            )
             let stars = RenderNode(name: "Stars", shader: "fx_starfield")
             let nebula = RenderNode(
                 name: "Nebula",

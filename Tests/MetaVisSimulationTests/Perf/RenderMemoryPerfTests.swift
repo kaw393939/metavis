@@ -1,6 +1,7 @@
 import XCTest
 import MetaVisCore
 import MetaVisSimulation
+import Foundation
 
 #if canImport(Darwin)
 import Darwin
@@ -87,6 +88,24 @@ final class RenderMemoryPerfTests: XCTestCase {
         let budgetBytes = budgetMB * 1024 * 1024
 
         let deltaPeak = endPeak > startPeak ? (endPeak - startPeak) : 0
+
+        if ProcessInfo.processInfo.environment["METAVIS_PERF_LOG"] == "1" {
+            let deltaMB = Double(deltaPeak) / 1024.0 / 1024.0
+            let budgetMBDouble = Double(budgetBytes) / 1024.0 / 1024.0
+            print(String(format: "[PerfMem] PeakRSSDelta %.1fMB (budget %.0fMB)", deltaMB, budgetMBDouble))
+
+            var e = PerfLogger.makeBaseEvent(
+                suite: "RenderMemoryPerfTests",
+                test: "test_render_peak_rss_delta_budget",
+                label: "PeakRSSDelta",
+                width: 0,
+                height: 0,
+                frames: 0
+            )
+            e.peakRSSDeltaMB = deltaMB
+            e.message = String(format: "budget=%.0fMB", budgetMBDouble)
+            PerfLogger.write(e)
+        }
         XCTAssertLessThanOrEqual(
             deltaPeak,
             budgetBytes,

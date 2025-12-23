@@ -1,0 +1,7 @@
+{
+  "query": "cg-config-v2.2.0_aces-v1.3_ocio-v2.4.ocio download",
+  "answer": "Fastest options:\n\n- No download needed (OCIO 2.4+): set your OCIO path to\n  ocio://cg-config-v2.2.0_aces-v1.3_ocio-v2.4\n  Most OCIO-enabled apps accept that URI directly. ([opencolorio.readthedocs.io](https://opencolorio.readthedocs.io/en/latest/configurations/aces_cg.html?utm_source=openai))\n\n- Download the .ocio file: grab it from the official OpenColorIO-Config-ACES “2.1.0–2.2.0 for ACES 1.3” release (assets include cg-config-v2.2.0_aces-v1.3_ocio-v2.4.ocio). ([github.com](https://github.com/AcademySoftwareFoundation/OpenColorIO-Config-ACES/releases/tag/v2.1.0-v2.2.0))\n\nOptional: if you prefer to generate the file locally, you can load the built‑in config via PyOpenColorIO and serialize it to disk (Config.serialize). ([opencolorio.readthedocs.io](https://opencolorio.readthedocs.io/en/v2.5.0/api/config.html?utm_source=openai))\n\nNeed the direct asset link or setup steps for your specific DCC?",
+  "citations": [],
+  "sources": [],
+  "metadata": {}
+}

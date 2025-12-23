@@ -565,10 +565,27 @@ public actor VideoExporter: VideoExporting {
                         )
                     }
                     let frameContext = frameContextProvider?(timeline, renderTime)
+
+                    let renderPolicy: RenderPolicyTier = {
+                        if let raw = ProcessInfo.processInfo.environment["METAVIS_RENDER_POLICY_TIER"],
+                           let parsed = RenderPolicyTier.parse(raw) {
+                            return parsed
+                        }
+                        switch quality.fidelity {
+                        case .draft:
+                            return .consumer
+                        case .high:
+                            return .creator
+                        case .master:
+                            return .studio
+                        }
+                    }()
+
                     let requestBase = try await compiler.compile(
                         timeline: timeline,
                         at: renderTime,
                         quality: quality,
+                        renderPolicy: renderPolicy,
                         frameContext: frameContext
                     )
                     let request = RenderRequest(
@@ -577,7 +594,9 @@ public actor VideoExporter: VideoExporting {
                         time: requestBase.time,
                         quality: requestBase.quality,
                         assets: requestBase.assets,
-                        renderFPS: Double(frameRate)
+                        renderFPS: Double(frameRate),
+                        renderPolicy: requestBase.renderPolicy,
+                        edgePolicy: requestBase.edgePolicy
                     )
                     if shouldTraceFrame {
                         await trace.record(

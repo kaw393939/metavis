@@ -1,5 +1,6 @@
 import Foundation
 import MetaVisCore
+import MetaVisGraphics
 import MetaVisTimeline
 
 /// Responsible for transforming a generic Timeline into an executable RenderGraph.
@@ -10,7 +11,14 @@ public struct TimelineCompiler {
 
     public enum Error: Swift.Error, Sendable, Equatable {
         case unknownFeature(id: String)
+        case unsupportedEffectCompilationDomain(featureID: String, compilationDomain: FeatureManifest.CompilationDomain)
         case unsupportedEffectInputPort(featureID: String, port: String)
+    }
+
+    private enum ClipEffectInputPort: String, Sendable {
+        case source
+        case input
+        case faceMask
     }
     
     /// Compiles the timeline into a RenderRequest for a specific frame time.
@@ -24,6 +32,8 @@ public struct TimelineCompiler {
         timeline: Timeline,
         at time: Time,
         quality: QualityProfile,
+        renderPolicy: RenderPolicyTier = .creator,
+        displayTarget: RenderRequest.DisplayTarget? = nil,
         frameContext: RenderFrameContext? = nil
     ) async throws -> RenderRequest {
 
@@ -53,7 +63,8 @@ public struct TimelineCompiler {
             return RenderRequest(
                 graph: RenderGraph(nodes: [emptyNode], rootNodeID: emptyNode.id),
                 time: time,
-                quality: quality
+                quality: quality,
+                renderPolicy: renderPolicy
             )
         }
         
@@ -168,12 +179,84 @@ public struct TimelineCompiler {
             compositeRoot = currentRoot
         }
         
-        // 4. Apply ODT (ACEScg → Rec.709 + gamma)
-        let odtNode = RenderNode(
-            name: "ODT_Display",
-            shader: "odt_acescg_to_rec709",
-            inputs: ["input": compositeRoot.id]
-        )
+        // 4. Apply ODT (terminal display transform)
+        // Shipping default remains SDR Rec.709 unless an explicit display target is selected.
+        let resolvedDisplayTarget = displayTarget ?? .sdrRec709
+        let env = ProcessInfo.processInfo.environment
+        let forceShaderODT = env["METAVIS_FORCE_SHADER_ODT"] == "1"
+        let forceTunedShaderODT = env["METAVIS_FORCE_SHADER_ODT_TUNED"] == "1"
+        let forceTunedShaderODT_HDR = env["METAVIS_FORCE_SHADER_ODT_HDR_TUNED"] == "1"
+
+        let odtNode: RenderNode = {
+            switch resolvedDisplayTarget {
+            case .sdrRec709:
+                if !forceShaderODT, let lut = LUTResources.aces13SDRSRGBDisplayRRTODT33() {
+                    return RenderNode(
+                        name: "ODT_Display",
+                        shader: "lut_apply_3d_rgba16f",
+                        inputs: ["input": compositeRoot.id],
+                        parameters: ["lut": .data(lut)],
+                        output: RenderNode.OutputSpec(resolution: .full, pixelFormat: .rgba16Float)
+                    )
+                }
+
+                // Fallbacks: maintain existing behavior when the LUT is unavailable.
+                if renderPolicy == .studio, forceTunedShaderODT {
+                    // Best-known tuned defaults (from SDR ΔE2000 sweep) for shader fallback parity.
+                    return RenderNode(
+                        name: "ODT_Display",
+                        shader: "odt_acescg_to_rec709_studio_tuned",
+                        inputs: ["input": compositeRoot.id],
+                        parameters: [
+                            "gamutCompress": .float(ColorCertTunedDefaults.SDRRec709Studio.gamutCompress),
+                            "highlightDesatStrength": .float(ColorCertTunedDefaults.SDRRec709Studio.highlightDesatStrength),
+                            "redModStrength": .float(ColorCertTunedDefaults.SDRRec709Studio.redModStrength)
+                        ]
+                    )
+                }
+
+                let shader = renderPolicy == .studio ? "odt_acescg_to_rec709_studio" : "odt_acescg_to_rec709"
+                return RenderNode(
+                    name: "ODT_Display",
+                    shader: shader,
+                    inputs: ["input": compositeRoot.id]
+                )
+            case .hdrPQ1000:
+                if !forceShaderODT, let lut = LUTResources.aces13HDRRec2100PQ1000DisplayRRTODT33() {
+                    return RenderNode(
+                        name: "ODT_Display",
+                        shader: "lut_apply_3d_rgba16f",
+                        inputs: ["input": compositeRoot.id],
+                        parameters: ["lut": .data(lut)],
+                        output: RenderNode.OutputSpec(resolution: .full, pixelFormat: .rgba16Float)
+                    )
+                }
+
+                if forceTunedShaderODT_HDR {
+                    // Tunable HDR ODT path (used for sweeps / experimental parity improvements).
+                    // Defaults are conservative; the parity test can discover better values.
+                    return RenderNode(
+                        name: "ODT_Display",
+                        shader: "odt_acescg_to_pq1000_tuned",
+                        inputs: ["input": compositeRoot.id],
+                        parameters: [
+                            "maxNits": .float(ColorCertTunedDefaults.HDRPQ1000.maxNits),
+                            // Tuned default from HDR Macbeth sweep (BEST_SCORE): scale≈0.136, knee≈10000, gc≈0.
+                            "pqScale": .float(ColorCertTunedDefaults.HDRPQ1000.pqScale),
+                            "highlightDesat": .float(ColorCertTunedDefaults.HDRPQ1000.highlightDesat),
+                            "kneeNits": .float(ColorCertTunedDefaults.HDRPQ1000.kneeNits),
+                            "gamutCompress": .float(ColorCertTunedDefaults.HDRPQ1000.gamutCompress)
+                        ]
+                    )
+                }
+
+                return RenderNode(
+                    name: "ODT_Display",
+                    shader: "odt_acescg_to_pq1000",
+                    inputs: ["input": compositeRoot.id]
+                )
+            }
+        }()
         nodes.append(odtNode)
         
         // 5. Assemble final graph
@@ -182,7 +265,9 @@ public struct TimelineCompiler {
         return RenderRequest(
             graph: graph,
             time: time,
-            quality: quality
+            quality: quality,
+            renderPolicy: renderPolicy,
+            displayTarget: resolvedDisplayTarget
         )
     }
     
@@ -207,18 +292,27 @@ public struct TimelineCompiler {
                 continue
             }
 
+            // Make non-clip-compilable a first-class label: don't discover incompatibility late.
+            guard manifest.compilationDomain == .clip else {
+                throw Error.unsupportedEffectCompilationDomain(featureID: manifest.id, compilationDomain: manifest.compilationDomain)
+            }
+
             // Clip-level effects can have multiple inputs (e.g. face enhance needs a face mask).
             // We supply conventional bindings here and create minimal generator nodes when required.
             var externalInputs: [String: UUID] = [:]
 
             // Primary input naming: support either `source` or `input`.
             for port in manifest.inputs {
-                switch port.name {
-                case "source", "input":
+                guard let mapped = ClipEffectInputPort(rawValue: port.name) else {
+                    throw Error.unsupportedEffectInputPort(featureID: manifest.id, port: port.name)
+                }
+
+                switch mapped {
+                case .source, .input:
                     // Prefer `source` when requested; otherwise `input`.
                     externalInputs[port.name] = currentOutput
 
-                case "faceMask":
+                case .faceMask:
                     let rects = frameContext?.faceRectsByClipID[clip.id] ?? []
                     // Pack as [Float] for NodeValue.floatArray.
                     var rectFloats: [Float] = []
@@ -237,9 +331,6 @@ public struct TimelineCompiler {
                     )
                     compiledNodes.append(maskNode)
                     externalInputs[port.name] = maskNode.id
-
-                default:
-                    throw Error.unsupportedEffectInputPort(featureID: manifest.id, port: port.name)
                 }
             }
 

@@ -2,6 +2,7 @@ import XCTest
 @testable import MetaVisSimulation
 import MetaVisTimeline
 import MetaVisCore
+import MetaVisGraphics
 
 final class ACEScgWorkingSpaceContractTests: XCTestCase {
 
@@ -31,10 +32,64 @@ final class ACEScgWorkingSpaceContractTests: XCTestCase {
         let shaders = request.graph.nodes.map { $0.shader }
 
         XCTAssertTrue(shaders.contains("idt_rec709_to_acescg"), "Expected compiler to insert IDT for Rec.709 sources")
-        XCTAssertEqual(shaders.filter { $0 == "odt_acescg_to_rec709" }.count, 1, "Expected exactly one ODT at display")
 
-        let root = request.graph.nodes.first { $0.id == request.graph.rootNodeID }
-        XCTAssertEqual(root?.shader, "odt_acescg_to_rec709", "Expected ODT to be graph root")
+        // Preferred: apply the official ACES 1.3 SDR (sRGB display) LUT when available.
+        // Fallback: shader-based ODT.
+        let hasLUT = LUTResources.aces13SDRSRGBDisplayRRTODT33() != nil
+        if hasLUT {
+            XCTAssertEqual(shaders.filter { $0 == "lut_apply_3d_rgba16f" }.count, 1, "Expected exactly one LUT ODT at display")
+            let root = request.graph.nodes.first { $0.id == request.graph.rootNodeID }
+            XCTAssertEqual(root?.shader, "lut_apply_3d_rgba16f", "Expected LUT ODT to be graph root")
+        } else {
+            XCTAssertEqual(shaders.filter { $0 == "odt_acescg_to_rec709" }.count, 1, "Expected exactly one ODT at display")
+            let root = request.graph.nodes.first { $0.id == request.graph.rootNodeID }
+            XCTAssertEqual(root?.shader, "odt_acescg_to_rec709", "Expected ODT to be graph root")
+        }
+    }
+
+    func test_compiler_can_select_hdr_pq1000_odt() async throws {
+        let timeline = Timeline(
+            tracks: [
+                Track(
+                    name: "Video",
+                    kind: .video,
+                    clips: [
+                        Clip(
+                            name: "Macbeth",
+                            asset: AssetReference(sourceFn: "ligm://fx_macbeth"),
+                            startTime: .zero,
+                            duration: Time(seconds: 1.0)
+                        )
+                    ]
+                )
+            ],
+            duration: Time(seconds: 1.0)
+        )
+
+        let compiler = TimelineCompiler()
+        let quality = QualityProfile(name: "Test", fidelity: .high, resolutionHeight: 256, colorDepth: 10)
+        let request = try await compiler.compile(
+            timeline: timeline,
+            at: .zero,
+            quality: quality,
+            displayTarget: .hdrPQ1000
+        )
+
+        let shaders = request.graph.nodes.map { $0.shader }
+        XCTAssertTrue(shaders.contains("idt_rec709_to_acescg"), "Expected compiler to insert IDT for Rec.709 sources")
+
+        // Preferred: apply the official ACES 1.3 HDR PQ1000 display LUT when available.
+        // Fallback: shader-based ODT.
+        let hasLUT = LUTResources.aces13HDRRec2100PQ1000DisplayRRTODT33() != nil
+        if hasLUT {
+            XCTAssertEqual(shaders.filter { $0 == "lut_apply_3d_rgba16f" }.count, 1, "Expected exactly one LUT ODT at display")
+            let root = request.graph.nodes.first { $0.id == request.graph.rootNodeID }
+            XCTAssertEqual(root?.shader, "lut_apply_3d_rgba16f", "Expected LUT ODT to be graph root")
+        } else {
+            XCTAssertEqual(shaders.filter { $0 == "odt_acescg_to_pq1000" }.count, 1, "Expected exactly one HDR ODT at display")
+            let root = request.graph.nodes.first { $0.id == request.graph.rootNodeID }
+            XCTAssertEqual(root?.shader, "odt_acescg_to_pq1000", "Expected HDR ODT to be graph root")
+        }
     }
 
     func test_exr_sources_use_linear_idt() async throws {

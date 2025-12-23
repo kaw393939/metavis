@@ -13,6 +13,51 @@ namespace Color {
     inline float luminance(float3 rgb) {
         return dot(rgb, LumaWeights);
     }
+
+    // MARK: - Reference Gamut Compression (RGC-style, luma-preserving)
+
+    inline float RGC_knee_compress(float x, float threshold, float limit) {
+        // Smoothly compress x above threshold, asymptotically approaching limit.
+        // x, threshold, limit are expected >= 0.
+        if (x <= threshold) return x;
+        float d = x - threshold;
+        float range = max(limit - threshold, 1e-4);
+        // Rational soft-knee: threshold + (d * range) / (d + range)
+        return threshold + (d * range) / (d + range);
+    }
+
+    inline float3 RGC_compress_luma_preserving(
+        float3 rgbLinear,
+        float3 lumaWeights,
+        float satThreshold,
+        float satLimit,
+        float strength
+    ) {
+        // Luma-preserving saturation limiting.
+        // - Preserves achromatic axis.
+        // - Compresses saturation (relative chroma) beyond satThreshold toward satLimit.
+        // - strength blends between identity (0) and full compression (1).
+        float s = clamp(strength, 0.0, 1.0);
+        if (s <= 0.0) return rgbLinear;
+
+        float3 x = rgbLinear;
+        float luma = dot(x, lumaWeights);
+        float3 gray = float3(luma);
+        float3 c = x - gray;
+        float chroma = length(c);
+
+        // Saturation proxy: chroma relative to luma.
+        float denom = max(luma, 1e-4);
+        float sat = chroma / denom;
+
+        float t = max(satThreshold, 0.0);
+        float L = max(satLimit, t + 1e-3);
+        float satC = RGC_knee_compress(max(sat, 0.0), t, L);
+        float scale = (sat > 1e-6) ? (satC / sat) : 1.0;
+
+        float3 y = gray + c * scale;
+        return mix(x, y, s);
+    }
     
 } // namespace Color
 } // namespace Core
@@ -37,9 +82,11 @@ constant float3x3 MAT_ACEScg_to_Rec709 = float3x3(
 // MARK: - Rec.2020 Matrices
 // ACEScg -> Rec.2020 (Linear)
 constant float3x3 MAT_ACEScg_to_Rec2020 = float3x3(
-    float3(0.6132, 0.0742, 0.0206),
-    float3(0.3395, 0.9167, 0.1061),
-    float3(0.0474, 0.0091, 0.8733)
+    // AP1 (D60) -> Rec.2020 (D65) with Bradford chromatic adaptation.
+    // Computed offline from published chromaticities; primaries are very similar so this is near-identity.
+    float3(1.0258247, -0.0022344, -0.0050134),
+    float3(-0.0200532, 1.0045865, -0.0252901),
+    float3(-0.0057716, -0.0023521, 1.0303034)
 );
 
 // MARK: - standard Transfer Functions
@@ -233,6 +280,23 @@ kernel void lut_apply_3d(
     dest.write(float4(result, pixel.a), gid);
 }
 
+// 3D LUT Application (RGBA16F fast path)
+// For pipelines that are already operating in RGBA16F, this avoids float<->half conversions.
+kernel void lut_apply_3d_rgba16f(
+    texture2d<half, access::read> source [[texture(0)]],
+    texture2d<half, access::write> dest [[texture(1)]],
+    texture3d<half, access::sample> lut [[texture(2)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    if (gid.x >= dest.get_width() || gid.y >= dest.get_height()) return;
+
+    constexpr sampler lutSampler(coord::normalized, address::clamp_to_edge, filter::linear);
+
+    half4 pixel = source.read(gid);
+    half3 result = lut.sample(lutSampler, float3(pixel.rgb)).rgb;
+    dest.write(half4(result, pixel.a), gid);
+}
+
 kernel void contrast_adjust(
     texture2d<float, access::read> source [[texture(0)]],
     texture2d<float, access::write> dest [[texture(1)]],
@@ -290,6 +354,74 @@ kernel void idt_linear_rec709_to_acescg(
 // Output Device Transform: ACEScg Linear -> sRGB Texture
 // This is the "Exit Gate" for viewing.
 // NOTE: A real RRT+ODT is complex. This is a "Simple ODT" (Clip + Gamma) for the Vertical Slice.
+inline float3 ACES_RRT_curve_hill(float3 v) {
+    // ACES RRT+ODT fit (Stephen Hill). Operates on non-negative scene-linear.
+    float3 x = max(v, 0.0);
+    float3 a = x * (x + 0.0245786f) - 0.000090537f;
+    float3 b = x * (0.983729f * x + 0.4329510f) + 0.238081f;
+    return a / b;
+}
+
+inline float3 ACES_sweeteners_fast(float3 acescg) {
+    // Minimal, analytic sweeteners to reduce obvious mismatch vs reference RRT/ODT LUTs.
+    // Goal: improve fallback behavior, not replace LUT reference.
+    float luma = dot(acescg, Core::Color::LumaWeights);
+    float3 gray = float3(luma);
+
+    // Highlight desaturation (scene-linear domain): very gentle.
+    float highlight = smoothstep(1.0, 4.0, max(luma, 0.0));
+    acescg = mix(acescg, gray, 0.12 * highlight);
+
+    // Red rolloff for strongly red-dominant values (helps match ACES red modifier behavior loosely).
+    float maxGB = max(acescg.g, acescg.b);
+    float redDom = smoothstep(0.0, 0.25, (acescg.r - maxGB));
+    float sat = length(acescg - gray);
+    float satW = smoothstep(0.03, 0.25, sat);
+    float w = redDom * satW;
+    acescg.r = mix(acescg.r, luma, 0.06 * w);
+    return acescg;
+}
+
+inline float3 ACES_sweeteners_tuned(float3 acescg, float highlightDesatStrength, float redModStrength) {
+    // Tunable variant used for parity sweeps.
+    float luma = dot(acescg, Core::Color::LumaWeights);
+    float3 gray = float3(luma);
+
+    float highlight = smoothstep(1.0, 4.0, max(luma, 0.0));
+    float hd = clamp(highlightDesatStrength, 0.0, 1.0);
+    acescg = mix(acescg, gray, hd * highlight);
+
+    float maxGB = max(acescg.g, acescg.b);
+    float redDom = smoothstep(0.0, 0.25, (acescg.r - maxGB));
+    float sat = length(acescg - gray);
+    float satW = smoothstep(0.03, 0.25, sat);
+    float w = redDom * satW;
+    float rs = clamp(redModStrength, 0.0, 0.25);
+    acescg.r = mix(acescg.r, luma, rs * w);
+    return acescg;
+}
+
+inline float3 Core_gamut_compress_luma_preserving_709(float3 lin709, float strength) {
+    // Luma-preserving saturation limiting in Rec.709 linear display primaries.
+    float3 x = max(lin709, 0.0);
+    float luma = dot(x, Core::Color::LumaWeights);
+
+    float tLum = smoothstep(0.25, 1.00, max(luma, 0.0));
+    float satLimit = mix(2.4, 1.35, tLum);
+    float satThreshold = 0.85 * satLimit;
+
+    float k = clamp(strength, 0.0, 1.0);
+    x = Core::Color::RGC_compress_luma_preserving(
+        x,
+        Core::Color::LumaWeights,
+        satThreshold,
+        satLimit,
+        k
+    );
+    return max(x, 0.0);
+}
+
+float3 ACESFilm(float3 x);
 kernel void odt_acescg_to_rec709(
     texture2d<float, access::read> source [[texture(0)]],
     texture2d<float, access::write> dest [[texture(1)]],
@@ -299,16 +431,75 @@ kernel void odt_acescg_to_rec709(
     
     float4 pixel = source.read(gid);
     
-    // 1. Gamut Map (ACEScg -> Rec.709)
-    float3 lin709 = MAT_ACEScg_to_Rec709 * pixel.rgb;
-    
-    // 2. Apply Gamma (Linear Rec.709 -> sRGB)
+    // Approximate ACES RRT+ODT (scene-referred -> display-referred) using a fitted curve.
+    // This is intentionally analytic (no LUT) and exists primarily as a fallback path.
+    float3 working = ACES_sweeteners_fast(pixel.rgb);
+    float3 rrt = ACES_RRT_curve_hill(working);
+
+    // Gamut map (ACEScg/AP1 -> Rec.709 linear display primaries)
+    float3 lin709 = MAT_ACEScg_to_Rec709 * rrt;
+    lin709 = clamp(lin709, 0.0, 1.0);
+
+    // Display encode (Linear Rec.709 -> sRGB)
     float3 srgb = Linear_to_sRGB(lin709);
-    
-    // 3. Simple Clamp (SDR)
     srgb = clamp(srgb, 0.0, 1.0);
     
     // Force opaque alpha for video export pipelines (AVAssetWriter may treat input as premultiplied).
+    dest.write(float4(srgb, 1.0), gid);
+}
+
+// Output Device Transform: ACEScg Linear -> sRGB Texture (Studio)
+// Higher-correctness path: apply an ACES fitted tone scale before display encoding.
+// NOTE: This is still not a full ACES 1.3 RRT+ODT implementation, but it is materially
+// closer than the placeholder and is scoped behind the Studio render policy tier.
+kernel void odt_acescg_to_rec709_studio(
+    texture2d<float, access::read> source [[texture(0)]],
+    texture2d<float, access::write> dest [[texture(1)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    if (gid.x >= dest.get_width() || gid.y >= dest.get_height()) return;
+
+    float4 pixel = source.read(gid);
+
+    // Studio path uses the same analytic RRT-style curve as the fallback.
+    // Keep the separate kernel name for compatibility with existing graphs/tests.
+    float3 working = ACES_sweeteners_fast(pixel.rgb);
+    float3 rrt = ACES_RRT_curve_hill(working);
+    float3 lin709 = MAT_ACEScg_to_Rec709 * rrt;
+    lin709 = clamp(lin709, 0.0, 1.0);
+    float3 srgb = Linear_to_sRGB(lin709);
+    srgb = clamp(srgb, 0.0, 1.0);
+
+    dest.write(float4(srgb, 1.0), gid);
+}
+
+// Output Device Transform: ACEScg Linear -> sRGB Texture (Studio, tunable)
+// Parameter:
+// - gamutCompress: 0..1, luma-preserving chroma compression in Rec.709 linear
+kernel void odt_acescg_to_rec709_studio_tuned(
+    texture2d<float, access::read> source [[texture(0)]],
+    texture2d<float, access::write> dest [[texture(1)]],
+    constant float &gamutCompress [[buffer(0)]],
+    constant float &highlightDesatStrength [[buffer(1)]],
+    constant float &redModStrength [[buffer(2)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    if (gid.x >= dest.get_width() || gid.y >= dest.get_height()) return;
+
+    float4 pixel = source.read(gid);
+
+    float3 working = ACES_sweeteners_tuned(pixel.rgb, highlightDesatStrength, redModStrength);
+    float3 rrt = ACES_RRT_curve_hill(working);
+    float3 lin709 = MAT_ACEScg_to_Rec709 * rrt;
+
+    float gc = clamp(gamutCompress, 0.0, 1.0);
+    if (gc > 0.0) {
+        lin709 = Core_gamut_compress_luma_preserving_709(lin709, gc);
+    }
+
+    lin709 = clamp(lin709, 0.0, 1.0);
+    float3 srgb = Linear_to_sRGB(lin709);
+    srgb = clamp(srgb, 0.0, 1.0);
     dest.write(float4(srgb, 1.0), gid);
 }
 

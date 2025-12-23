@@ -16,6 +16,36 @@ public struct FeatureManifest: Identifiable, Codable, Sendable {
         }
     }
 
+    /// Where this feature is intended to be compiled/used.
+    ///
+    /// This is a first-class label used to prevent the compiler from "discovering" incompatibility late.
+    public enum CompilationDomain: String, Codable, Sendable {
+        /// Clip-scoped effects compiled by `TimelineCompiler.compileEffects(...)`.
+        case clip
+        /// Transition-scoped effects (e.g., crossfade/wipe) compiled by the transition compiler.
+        case transition
+        /// Scene / graph-scoped effects requiring multi-input wiring or runtime-managed resources.
+        case scene
+        /// Generators (no clip source required) like test patterns.
+        case generator
+        /// Non-rendering features that affect compilation semantics (e.g. intrinsic/audio utilities).
+        case utility
+
+        fileprivate static func infer(category: FeatureCategory, inputs: [PortDefinition], domain: Domain) -> CompilationDomain {
+            // Non-video manifests are interpreted by higher-level systems; they do not compile to Metal nodes.
+            guard domain == .video else { return .utility }
+
+            if category == .generator { return .generator }
+
+            // If it declares any non-clip port, it cannot be a clip-scoped effect today.
+            let supportedClipPorts: Set<String> = ["source", "input", "faceMask"]
+            if inputs.contains(where: { !supportedClipPorts.contains($0.name) }) {
+                return .scene
+            }
+            return .clip
+        }
+    }
+
     /// Manifest schema version.
     ///
     /// Backward compatible: if missing in JSON, defaults to 1.
@@ -25,6 +55,11 @@ public struct FeatureManifest: Identifiable, Codable, Sendable {
     ///
     /// Backward compatible: if missing in JSON, inferred from `id`.
     public let domain: Domain
+
+    /// Where the feature is expected to compile/run (clip/transition/scene/generator).
+    ///
+    /// Backward compatible: if missing in JSON, inferred from `category` and `inputs`.
+    public let compilationDomain: CompilationDomain
 
     /// Unique identifier (e.g., "com.metavis.fx.bloom")
     public let id: String
@@ -61,11 +96,13 @@ public struct FeatureManifest: Identifiable, Codable, Sendable {
         kernelName: String,
         passes: [FeaturePass]? = nil,
         schemaVersion: Int = 1,
-        domain: Domain? = nil
+        domain: Domain? = nil,
+        compilationDomain: CompilationDomain? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.id = id
-        self.domain = domain ?? Domain.infer(from: id)
+        let inferredDomain = domain ?? Domain.infer(from: id)
+        self.domain = inferredDomain
         self.version = version
         self.name = name
         self.category = category
@@ -73,11 +110,13 @@ public struct FeatureManifest: Identifiable, Codable, Sendable {
         self.parameters = parameters
         self.kernelName = kernelName
         self.passes = passes
+        self.compilationDomain = compilationDomain ?? CompilationDomain.infer(category: category, inputs: inputs, domain: inferredDomain)
     }
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
         case domain
+        case compilationDomain
         case id
         case version
         case name
@@ -105,12 +144,17 @@ public struct FeatureManifest: Identifiable, Codable, Sendable {
         self.parameters = try container.decode([ParameterDefinition].self, forKey: .parameters)
         self.kernelName = try container.decode(String.self, forKey: .kernelName)
         self.passes = try container.decodeIfPresent([FeaturePass].self, forKey: .passes)
+
+        // Backward compatible: if missing, infer from category/inputs.
+        self.compilationDomain = try container.decodeIfPresent(CompilationDomain.self, forKey: .compilationDomain)
+            ?? CompilationDomain.infer(category: self.category, inputs: self.inputs, domain: domain)
     }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(schemaVersion, forKey: .schemaVersion)
         try container.encode(domain, forKey: .domain)
+        try container.encode(compilationDomain, forKey: .compilationDomain)
         try container.encode(id, forKey: .id)
         try container.encode(version, forKey: .version)
         try container.encode(name, forKey: .name)

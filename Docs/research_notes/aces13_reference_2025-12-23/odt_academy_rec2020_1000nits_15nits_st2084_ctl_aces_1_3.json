@@ -1,0 +1,7 @@
+{
+  "query": "ODT.Academy.Rec2020_1000nits_15nits_ST2084.ctl ACES 1.3",
+  "answer": "Do you need the ACES 1.3 CTL file, its parameters, or an OCIO equivalent?\n\n- What it is: ODT.Academy.Rec2020_1000nits_15nits_ST2084.ctl is the HDR Rec.2020 PQ (ST 2084) Output Transform targeting 1000 cd/m² peak, D65 white, dark surround, with 18% mid‑gray at 15 cd/m². ([community.acescentral.com](https://community.acescentral.com/uploads/default/original/1X/ee0e33645ccb873afd164deec2e5d37be2dd8c97.pdf?utm_source=openai))\n- Where to get it (CTL): Check out the ACES v1.3 tag in the aces-core repo and locate the Rec.2020 ST2084 (1000 nits) ODT CTL there. The v1.3/v1.3.1 tags contain the ACES 1.x transforms. ([github.com](https://github.com/ampas/aces-core))\n- Combined ID (for AMF/workflow docs): The corresponding combined transform ID appears as RRTODT.Academy.Rec2020_1000nits_15nits_ST2084 (used in AMF examples). ([docs.acescentral.com](https://docs.acescentral.com/guides/amf/?utm_source=openai))\n\nIf you’re using OCIO instead of raw CTL, I can point you to the matching Output colorspace/view in the ACES OCIO config and provide setup steps for your app (Resolve, Nuke, etc.). ([github.com](https://github.com/AcademySoftwareFoundation/OpenColorIO-Config-ACES?utm_source=openai))\n\nTell me what you prefer: a direct path to the CTL in the v1.3 tag, an OCIO config mapping, or usage guidance in a specific tool.",
+  "citations": [],
+  "sources": [],
+  "metadata": {}
+}

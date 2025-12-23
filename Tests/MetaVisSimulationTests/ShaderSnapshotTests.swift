@@ -42,7 +42,8 @@ final class ShaderSnapshotTests: XCTestCase {
                 if SnapshotHelper.shouldRecordGoldens {
                     let url = try helper.saveGolden(name: goldenName, buffer: buffer, width: width, height: height)
                     print("Updated Golden: \(url.path)")
-                    throw XCTSkip("Golden updated; re-run to verify")
+                    XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+                    return
                 } else {
                     XCTFail("Golden mismatch for \(goldenName).exr max=\(maxDelta) avg=\(avgDelta) (set RECORD_GOLDENS=1 to update)")
                 }
@@ -51,7 +52,8 @@ final class ShaderSnapshotTests: XCTestCase {
             if SnapshotHelper.shouldRecordGoldens {
                 let url = try helper.saveGolden(name: goldenName, buffer: buffer, width: width, height: height)
                 print("Generated Golden: \(url.path)")
-                throw XCTSkip("Golden recorded; re-run to verify")
+                XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+                return
             } else {
                 XCTFail("Missing golden \(goldenName).exr (re-run with RECORD_GOLDENS=1 to record)")
             }

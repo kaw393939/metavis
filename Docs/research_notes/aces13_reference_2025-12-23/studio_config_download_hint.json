@@ -1,0 +1,7 @@
+{
+  "query": "studio-config-v2.2.0_aces-v1.3_ocio-v2.4.ocio download",
+  "answer": "Here’s the official way to get studio-config-v2.2.0_aces-v1.3_ocio-v2.4.ocio:\n\n- Direct download: Open the OpenColorIO-Config-ACES “v2.1.0–v2.2.0” release and grab the asset named studio-config-v2.2.0_aces-v1.3_ocio-v2.4.ocio (an .ocioz archive may also be listed). ([github.com](https://github.com/AcademySoftwareFoundation/OpenColorIO-Config-ACES/releases/tag/v2.1.0-v2.2.0))\n- Built-in (no file needed): In any app using OCIO 2.4+, set your config path to:\n  ocio://studio-config-v2.2.0_aces-v1.3_ocio-v2.4\n  This is the same config, built into OCIO. ([opencolorio.readthedocs.io](https://opencolorio.readthedocs.io/en/latest/releases/ocio_2_4.html?utm_source=openai))\n\nWant me to pull the exact asset URL for a curl/wget command?",
+  "citations": [],
+  "sources": [],
+  "metadata": {}
+}

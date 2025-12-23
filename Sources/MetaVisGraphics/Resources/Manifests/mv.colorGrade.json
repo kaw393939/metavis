@@ -5,6 +5,7 @@
   "version": "1.0.0",
   "name": "Color Grade",
   "category": "color",
+  "compilationDomain": "utility",
   "inputs": [],
   "parameters": [],
   "kernelName": ""

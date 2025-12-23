@@ -58,12 +58,21 @@ final class MultiPassBlurRenderTests: XCTestCase {
             case .match:
                 XCTAssertTrue(true)
             case .different(let maxDelta, let avgDelta):
-                XCTFail("Blur output differs from golden. max=\(maxDelta) avg=\(avgDelta)")
+                if SnapshotHelper.shouldRecordGoldens {
+                    let url = try helper.saveGolden(name: goldenName, buffer: floats, width: width, height: height)
+                    print("Updated Golden: \(url.path)")
+                    XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+                    return
+                } else {
+                    XCTFail("Blur output differs from golden. max=\(maxDelta) avg=\(avgDelta) (set RECORD_GOLDENS=1 to update)")
+                }
             }
         } else {
             if SnapshotHelper.shouldRecordGoldens {
-                _ = try helper.saveGolden(name: goldenName, buffer: floats, width: width, height: height)
-                throw XCTSkip("Golden recorded; re-run to verify")
+                let url = try helper.saveGolden(name: goldenName, buffer: floats, width: width, height: height)
+                print("Generated Golden: \(url.path)")
+                XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+                return
             } else {
                 XCTFail("Missing golden \(goldenName).exr (re-run with RECORD_GOLDENS=1 to record)")
             }

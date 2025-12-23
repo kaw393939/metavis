@@ -15,8 +15,10 @@ public struct FeatureManifestValidationError: Error, Sendable, Equatable {
 public enum FeatureManifestValidator {
     /// Validates a manifest for registry-load purposes.
     ///
-    /// This intentionally does NOT enforce usage-context rules (e.g. "clip effects must only accept `source`")
-    /// because the registry also contains multi-input features not supported as clip-level effects today.
+    /// This enforces *manifest-level* invariants and the declared compilation domain.
+    ///
+    /// In particular, clip-scoped manifests must only declare input ports supported by
+    /// `TimelineCompiler.compileEffects(...)` so incompatibility is discovered early.
     public static func validateForRegistryLoad(_ manifest: FeatureManifest) -> [FeatureManifestValidationError] {
         var errors: [FeatureManifestValidationError] = []
 
@@ -45,6 +47,22 @@ public enum FeatureManifestValidator {
         let portNames = manifest.inputs.map { $0.name }
         if Set(portNames).count != portNames.count {
             errors.append(.init(code: "MVFM020", featureID: manifest.id, message: "Duplicate input port names"))
+        }
+
+        // Compilation-domain sanity: prevent late compiler discovery of incompatibility.
+        if manifest.domain == .video, manifest.compilationDomain == .clip {
+            let supportedClipPorts: Set<String> = ["source", "input", "faceMask"]
+            for port in manifest.inputs {
+                if !supportedClipPorts.contains(port.name) {
+                    errors.append(
+                        .init(
+                            code: "MVFM060",
+                            featureID: manifest.id,
+                            message: "compilationDomain=clip but declares unsupported input port '\(port.name)'. Supported clip ports: \(supportedClipPorts.sorted().joined(separator: ", "))"
+                        )
+                    )
+                }
+            }
         }
 
         // Parameter sanity.

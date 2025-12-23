@@ -5,6 +5,7 @@
   "version": "1.0.0",
   "name": "Retime",
   "category": "utility",
+  "compilationDomain": "utility",
   "inputs": [],
   "parameters": [
     {

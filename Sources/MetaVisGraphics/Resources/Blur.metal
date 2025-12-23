@@ -10,90 +10,143 @@ using namespace metal;
 #define MAX_BLUR_RADIUS 128
 
 kernel void fx_blur_h(
-    texture2d<float, access::sample> sourceTexture [[texture(0)]],
-    texture2d<float, access::write> destTexture [[texture(1)]],
+    texture2d<half, access::read> sourceTexture [[texture(0)]],
+    texture2d<half, access::write> destTexture [[texture(1)]],
     constant float &radius [[buffer(0)]],
+    uint tid [[thread_index_in_threadgroup]],
     uint2 gid [[thread_position_in_grid]]
 ) {
-    if (gid.x >= destTexture.get_width() || gid.y >= destTexture.get_height()) {
+    const uint width = destTexture.get_width();
+    const uint height = destTexture.get_height();
+    if (gid.x >= width || gid.y >= height) {
         return;
     }
-    
-    float2 texelSize = 1.0 / float2(destTexture.get_width(), destTexture.get_height());
-    float2 uv = (float2(gid) + 0.5) * texelSize;
-    constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::linear);
-    
-    float effectiveRadius = min(radius, (float)MAX_BLUR_RADIUS);
-    
+
+    const float effectiveRadius = min(radius, (float)MAX_BLUR_RADIUS);
     if (effectiveRadius < 0.5) {
-        destTexture.write(sourceTexture.sample(s, uv), gid);
+        destTexture.write(sourceTexture.read(gid), gid);
         return;
     }
-    
-    half4 accumColor = half4(0.0h);
-    float totalWeight = 0.0;
-    
+
     // Gaussian Sigma: sigma = radius / 2.0
-    float sigma = max(effectiveRadius / 2.0, 0.01);
-    float twoSigmaSq = 2.0 * sigma * sigma;
-    
-    int r = min(int(ceil(effectiveRadius)), MAX_BLUR_RADIUS);
-    
+    const float sigma = max(effectiveRadius / 2.0, 0.01);
+    const float twoSigmaSq = 2.0 * sigma * sigma;
+    const int r = min(int(ceil(effectiveRadius)), MAX_BLUR_RADIUS);
+
+    threadgroup half weights[(MAX_BLUR_RADIUS * 2) + 1];
+    threadgroup float totalWeight;
+
+    if (tid == 0) {
+        float sum = 0.0;
+        for (int i = -r; i <= r; ++i) {
+            const float xf = float(i);
+            const float wf = exp(-(xf * xf) / twoSigmaSq);
+            weights[i + r] = half(wf);
+            sum += wf;
+        }
+        totalWeight = sum;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    half4 accumColor = half4(0.0h);
+    const int y = int(gid.y);
+    const int wMax = int(width) - 1;
     for (int i = -r; i <= r; ++i) {
-        half x = half(i);
-        half weight = half(exp(-(float(x * x)) / twoSigmaSq));
-        float offset = float(x) * texelSize.x;
-        accumColor += half4(sourceTexture.sample(s, uv + float2(offset, 0.0))) * weight;
-        totalWeight += float(weight);
+        const int sx = clamp(int(gid.x) + i, 0, wMax);
+        const half weight = weights[i + r];
+        accumColor += sourceTexture.read(uint2(uint(sx), uint(y))) * weight;
     }
-    
-    if (totalWeight > 0.0) {
-        accumColor /= half(totalWeight);
-    }
-    
-    destTexture.write(float4(accumColor), gid);
+
+    const float tw = max(totalWeight, 0.0000001);
+    destTexture.write(accumColor / half(tw), gid);
 }
 
 kernel void fx_blur_v(
-    texture2d<float, access::sample> sourceTexture [[texture(0)]],
-    texture2d<float, access::write> destTexture [[texture(1)]],
+    texture2d<half, access::read> sourceTexture [[texture(0)]],
+    texture2d<half, access::write> destTexture [[texture(1)]],
+    constant float &radius [[buffer(0)]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    const uint width = destTexture.get_width();
+    const uint height = destTexture.get_height();
+    if (gid.x >= width || gid.y >= height) {
+        return;
+    }
+
+    const float effectiveRadius = min(radius, (float)MAX_BLUR_RADIUS);
+    if (effectiveRadius < 0.5) {
+        destTexture.write(sourceTexture.read(gid), gid);
+        return;
+    }
+
+    const float sigma = max(effectiveRadius / 2.0, 0.01);
+    const float twoSigmaSq = 2.0 * sigma * sigma;
+    const int r = min(int(ceil(effectiveRadius)), MAX_BLUR_RADIUS);
+
+    threadgroup half weights[(MAX_BLUR_RADIUS * 2) + 1];
+    threadgroup float totalWeight;
+
+    if (tid == 0) {
+        float sum = 0.0;
+        for (int i = -r; i <= r; ++i) {
+            const float yf = float(i);
+            const float wf = exp(-(yf * yf) / twoSigmaSq);
+            weights[i + r] = half(wf);
+            sum += wf;
+        }
+        totalWeight = sum;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    half4 accumColor = half4(0.0h);
+    const int x = int(gid.x);
+    const int hMax = int(height) - 1;
+    for (int i = -r; i <= r; ++i) {
+        const int sy = clamp(int(gid.y) + i, 0, hMax);
+        const half weight = weights[i + r];
+        accumColor += sourceTexture.read(uint2(uint(x), uint(sy))) * weight;
+    }
+
+    const float tw = max(totalWeight, 0.0000001);
+    destTexture.write(accumColor / half(tw), gid);
+}
+
+// MARK: - Mip-LOD Blur (O(1))
+// Approximates a large-radius blur by sampling from a mipmapped input texture.
+// Expected to be used with an engine-generated mip pyramid.
+
+kernel void fx_mip_blur(
+    texture2d<half, access::sample> sourceTexture [[texture(0)]],
+    texture2d<half, access::write> destTexture [[texture(1)]],
     constant float &radius [[buffer(0)]],
     uint2 gid [[thread_position_in_grid]]
 ) {
-    if (gid.x >= destTexture.get_width() || gid.y >= destTexture.get_height()) {
+    const uint width = destTexture.get_width();
+    const uint height = destTexture.get_height();
+    if (gid.x >= width || gid.y >= height) {
         return;
     }
-    
-    float2 texelSize = 1.0 / float2(destTexture.get_width(), destTexture.get_height());
-    float2 uv = (float2(gid) + 0.5) * texelSize;
-    constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::linear);
-    
-    float effectiveRadius = min(radius, (float)MAX_BLUR_RADIUS);
-    
-    if (effectiveRadius < 0.5) {
-        destTexture.write(sourceTexture.sample(s, uv), gid);
+
+    // Preserve semantics for tiny radii.
+    if (radius < 0.5f) {
+        // Use base mip level.
+        destTexture.write(sourceTexture.read(gid), gid);
         return;
     }
-    
-    half4 accumColor = half4(0.0h);
-    float totalWeight = 0.0;
-    float sigma = max(effectiveRadius / 2.0, 0.01);
-    float twoSigmaSq = 2.0 * sigma * sigma;
-    int r = min(int(ceil(effectiveRadius)), MAX_BLUR_RADIUS);
-    
-    for (int i = -r; i <= r; ++i) {
-        half y = half(i);
-        half weight = half(exp(-(float(y * y)) / twoSigmaSq));
-        float offset = float(y) * texelSize.y;
-        accumColor += half4(sourceTexture.sample(s, uv + float2(0.0, offset))) * weight;
-        totalWeight += float(weight);
-    }
-    
-    if (totalWeight > 0.0) {
-        accumColor /= half(totalWeight);
-    }
-    
-    destTexture.write(float4(accumColor), gid);
+
+    // Trilinear mip sampling is the core of the O(1) blur.
+    constexpr sampler s(filter::linear, mip_filter::linear, address::clamp_to_edge, coord::normalized);
+
+    float2 outSize = float2(width, height);
+    float2 uv = (float2(gid) + 0.5f) / outSize;
+
+    float maxAvailLod = float(max(0u, sourceTexture.get_num_mip_levels() - 1u));
+    float desiredMaxLod = clamp(log2(max(radius, 1.0f)), 0.0f, maxAvailLod);
+
+    // O(1) per pixel: single trilinear LOD sample.
+    half4 c = sourceTexture.sample(s, uv, level(desiredMaxLod));
+    destTexture.write(c, gid);
 }
 
 // MARK: - Spectral Bloom

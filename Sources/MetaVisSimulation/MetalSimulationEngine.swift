@@ -16,11 +16,17 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
     private let commandQueue: MTLCommandQueue
     private var library: MTLLibrary?
     private var pipelineStates: [String: MTLComputePipelineState] = [:]
-    private var lutCache: [UUID: MTLTexture] = [:] // Cache 3D LUTs per node
+    private var renderPipelineStates: [String: MTLRenderPipelineState] = [:]
+    // Cache 3D LUT textures by LUT content hash so recompiling graphs doesn't trigger re-upload.
+    private var lutCache: [UInt64: MTLTexture] = [:]
     private var waveformBuffer: MTLBuffer?
     private let clipReader: ClipReader
     private let texturePool: TexturePool
     private var isConfigured: Bool = false
+
+    // Debug/perf diagnostics: populated when METAVIS_PERF_NODE_TIMING=1.
+    public private(set) var lastNodeTimingReport: String?
+
 
     private let maskDevice: MaskDevice
     private let maskTextureCache: CVMetalTextureCache?
@@ -33,6 +39,15 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
     }
 
     private let mode: EngineMode
+
+    private func fnv1a64(_ data: Data) -> UInt64 {
+        var hash: UInt64 = 14695981039346656037
+        for byte in data {
+            hash ^= UInt64(byte)
+            hash &*= 1099511628211
+        }
+        return hash
+    }
 
     private func compileLibraryFromBundledMetalSources(files: [String], bundle: Bundle) async throws -> MTLLibrary? {
         var source = "#include <metal_stdlib>\nusing namespace metal;\n"
@@ -74,6 +89,43 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
         let pso = try device.makeComputePipelineState(function: function)
         pipelineStates[name] = pso
         print("✅ Cached PSO: \(name)")
+        return pso
+    }
+
+    private func ensureCrossfadeRenderPipeline(pixelFormat: MTLPixelFormat, blendingEnabled: Bool) throws -> MTLRenderPipelineState? {
+        let key = "compositor_crossfade_render|pf=\(pixelFormat.rawValue)|blend=\(blendingEnabled ? 1 : 0)"
+        if let existing = renderPipelineStates[key] { return existing }
+        guard let library else {
+            logDebug("⚠️ No Metal library; cannot compile render PSO for crossfade")
+            return nil
+        }
+        guard let v = library.makeFunction(name: "compositor_fullscreen_vertex"),
+              let f = library.makeFunction(name: "compositor_read_fragment") else {
+            logDebug("⚠️ Render functions missing for crossfade")
+            return nil
+        }
+
+        let d = MTLRenderPipelineDescriptor()
+        d.label = key
+        d.vertexFunction = v
+        d.fragmentFunction = f
+        d.colorAttachments[0].pixelFormat = pixelFormat
+
+        if blendingEnabled {
+            let a = d.colorAttachments[0]!
+            a.isBlendingEnabled = true
+            a.rgbBlendOperation = .add
+            a.alphaBlendOperation = .add
+            // Use constant blend color (set via encoder.setBlendColor) as the mix factor.
+            // result = src * t + dst * (1 - t)
+            a.sourceRGBBlendFactor = .blendColor
+            a.destinationRGBBlendFactor = .oneMinusBlendColor
+            a.sourceAlphaBlendFactor = .blendAlpha
+            a.destinationAlphaBlendFactor = .oneMinusBlendAlpha
+        }
+
+        let pso = try device.makeRenderPipelineState(descriptor: d)
+        renderPipelineStates[key] = pso
         return pso
     }
     
@@ -131,16 +183,15 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
 
                  // Fallback: Runtime Compilation (concatenate a minimal set for tests)
                                  self.library = try await compileLibraryFromBundledMetalSources(files: [
-                          "ClearColor",        // Solid fills (empty timeline fallback)
                     "ColorSpace",         // IDT/ODT transforms
                           "ACES",               // Shared ACES helpers (ToneMapping/Grading)
                       "Procedural",         // Shared procedural helpers (volumetric nebula)
                     "Noise",              // Shared noise helpers (used by blur/bokeh)
                     "FaceEnhance",        // fx_face_enhance / fx_beauty_enhance
                       "FaceMaskGenerator",  // fx_generate_face_mask
-                                        "MaskSources",        // source_person_mask
+									"MaskedBlur",         // fx_masked_blur
                                         "MaskedColorGrade",   // fx_masked_grade
-                    "FormatConversion",   // RGBA→BGRA swizzle
+                          "FormatConversion",   // resize_bilinear_rgba16f (explicit adapter node)
                     "Compositor",         // Multi-clip alpha blending
                     "Blur",               // fx_blur_h / fx_blur_v
                           "ToneMapping",        // fx_tonemap_aces / fx_tonemap_pq
@@ -148,7 +199,6 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
                     "Macbeth",            // Procedural color chart
                     "SMPTE",              // Procedural bars
                     "ZonePlate",          // Procedural zone plate
-                      "DepthOne",           // Deterministic depth=1 generator (nebula debug)
                       "StarField",          // Deterministic star field generator (nebula debug)
                       "VolumetricNebula",   // Volumetric nebula raymarcher + composite
                     "Watermark"           // Export watermark overlays
@@ -161,12 +211,10 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
         if let lib = self.library,
            (lib.makeFunction(name: "fx_blur_h") == nil
             || lib.makeFunction(name: "fx_blur_v") == nil
-            || lib.makeFunction(name: "clear_color") == nil
             || lib.makeFunction(name: "fx_beauty_enhance") == nil
             || lib.makeFunction(name: "fx_face_enhance") == nil
             || lib.makeFunction(name: "fx_generate_face_mask") == nil
             || lib.makeFunction(name: "fx_masked_grade") == nil
-            || lib.makeFunction(name: "source_person_mask") == nil
             || lib.makeFunction(name: "fx_volumetric_nebula") == nil
             || lib.makeFunction(name: "fx_volumetric_composite") == nil) {
             if mode == .production {
@@ -174,14 +222,13 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
             }
             logDebug("⚠️ Bundled library missing required kernels; recompiling from bundle sources")
             self.library = try await compileLibraryFromBundledMetalSources(files: [
-                "ClearColor",
                 "ColorSpace",
                 "ACES",
                 "Procedural",
                 "Noise",
                 "FaceEnhance",
                 "FaceMaskGenerator",
-                "MaskSources",
+                "MaskedBlur",
                 "MaskedColorGrade",
                 "FormatConversion",
                 "Compositor",
@@ -191,7 +238,6 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
                 "Macbeth",
                 "SMPTE",
                 "ZonePlate",
-                "DepthOne",
                 "StarField",
                 "VolumetricNebula",
                 "Watermark"
@@ -203,12 +249,15 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
         }
         
         // Pre-warm Pipelines for Core Shaders
-        try await cachePipeline(name: "clear_color")
         try await cachePipeline(name: "idt_rec709_to_acescg")
         try await cachePipeline(name: "odt_acescg_to_rec709")
+        try await cachePipeline(name: "odt_acescg_to_rec709_studio")
+        try await cachePipeline(name: "odt_acescg_to_rec709_studio_tuned")
+        try await cachePipeline(name: "lut_apply_3d")
+        try await cachePipeline(name: "lut_apply_3d_rgba16f")
+        try await cachePipeline(name: "odt_acescg_to_pq1000")
         try await cachePipeline(name: "fx_generate_face_mask") // Vision Mask Gen parameters
         try await cachePipeline(name: "fx_masked_grade")
-        try await cachePipeline(name: "source_person_mask")
         
         // Compositor shaders for multi-clip transitions
         try await cachePipeline(name: "compositor_alpha_blend")
@@ -228,7 +277,6 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
         try await cachePipeline(name: "fx_smpte_bars")
 
         // Volumetric nebula
-        try await cachePipeline(name: "depth_one")
         try await cachePipeline(name: "fx_starfield")
         try await cachePipeline(name: "fx_volumetric_nebula")
         try await cachePipeline(name: "fx_volumetric_composite")
@@ -236,9 +284,14 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
         // Blur (Sprint 04 multi-pass)
         try await cachePipeline(name: "fx_blur_h")
         try await cachePipeline(name: "fx_blur_v")
+        try await cachePipeline(name: "fx_mip_blur")
 
         // Export watermark
         try await cachePipeline(name: "watermark_diagonal_stripes")
+
+        // Mixed-resolution edge adapter (explicit node only)
+        try await cachePipeline(name: "resize_bilinear_rgba16f")
+        try await cachePipeline(name: "resize_bicubic_rgba16f")
 
         isConfigured = true
     }
@@ -255,12 +308,31 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
     }
     
     public func render(request: RenderRequest) async throws -> RenderResult {
+        try await render(request: request, captureNodeTimings: false)
+    }
+
+    public func render(request: RenderRequest, captureNodeTimings: Bool) async throws -> RenderResult {
         // ... (Calls internal render)
         renderWarnings.removeAll(keepingCapacity: true)
 
-        guard let tex = try await internalRender(request: request) else {
+        guard let tex = try await internalRender(request: request, captureNodeTimings: captureNodeTimings) else {
             return RenderResult(imageBuffer: nil, metadata: ["error": "Root node texture missing"])
         }
+
+        // Perf/benchmark mode: allow skipping the expensive CPU readback path.
+        // This is opt-in and only intended for tests/metrics.
+        if request.skipReadback || ProcessInfo.processInfo.environment["METAVIS_SKIP_READBACK"] == "1" {
+            var metadata: [String: String] = [:]
+            if !renderWarnings.isEmpty {
+                metadata["warnings"] = renderWarnings.joined(separator: " | ")
+            }
+            if let report = lastNodeTimingReport {
+                metadata["nodeTimings"] = report
+            }
+            texturePool.checkin(tex)
+            return RenderResult(imageBuffer: nil, metadata: metadata)
+        }
+
         let readableTex: MTLTexture
         var stagingTex: MTLTexture?
         if tex.storageMode == .private {
@@ -283,6 +355,9 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
         var metadata: [String: String] = [:]
         if !renderWarnings.isEmpty {
             metadata["warnings"] = renderWarnings.joined(separator: " | ")
+        }
+        if let report = lastNodeTimingReport {
+            metadata["nodeTimings"] = report
         }
         return RenderResult(imageBuffer: data, metadata: metadata)
     }
@@ -317,13 +392,145 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
 
         return staging
     }
+
+    struct NodeTiming {
+        var name: String
+        var shader: String
+        var gpuMs: Double?
+    }
+
+    private func makeMipmappedCopy(source: MTLTexture, commandBuffer: MTLCommandBuffer, mipLevelCount: Int) -> MTLTexture? {
+        // Only 2D textures are supported in this path.
+        guard source.textureType == .type2D else { return nil }
+
+        // Create a mipmapped texture that matches the source format.
+        let usage: MTLTextureUsage = [.shaderRead, .shaderWrite]
+        guard let mipTex = texturePool.checkout(
+            width: source.width,
+            height: source.height,
+            pixelFormat: source.pixelFormat,
+            usage: usage,
+            storageMode: .private,
+            mipmapped: true,
+            mipLevelCount: mipLevelCount
+        ) else {
+            return nil
+        }
+
+        guard let blit = commandBuffer.makeBlitCommandEncoder() else {
+            texturePool.checkin(mipTex)
+            return nil
+        }
+
+        let size = MTLSize(width: source.width, height: source.height, depth: 1)
+        blit.copy(
+            from: source,
+            sourceSlice: 0,
+            sourceLevel: 0,
+            sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+            sourceSize: size,
+            to: mipTex,
+            destinationSlice: 0,
+            destinationLevel: 0,
+            destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0)
+        )
+
+        // Hardware mip pyramid generation.
+        blit.generateMipmaps(for: mipTex)
+        blit.endEncoding()
+
+        // We keep `mipTex` alive for the frame via `retainForFrame` at call sites.
+        return mipTex
+    }
+
+    private func generateMips(for inputTex: MTLTexture, name: String) async throws -> (MTLTexture, NodeTiming)? {
+        let fullLevels = max(1, Int(floor(log2(Double(max(1, max(inputTex.width, inputTex.height))))) + 1))
+        // Always generate full chain for now or could optimize if we knew the max radius required.
+        // For MaskedBlur optimization, we rely on the input texture being relatively small (downsampled), so mips are cheap.
+        
+        if let mipCB = commandQueue.makeCommandBuffer() {
+            if let mip = makeMipmappedCopy(source: inputTex, commandBuffer: mipCB, mipLevelCount: fullLevels) {
+                // Determine duration
+                let start = mipCB.gpuStartTime
+                await withCheckedContinuation { continuation in
+                    mipCB.addCompletedHandler { _ in
+                        continuation.resume()
+                    }
+                    mipCB.commit()
+                }
+                
+                // Note: gpuWaitTime is not exposed in standard Metal without enabling counters,
+                // but we can measure the timing if we wait.
+                // Re-using the helper architecture from internalRender.
+                
+                let end = mipCB.gpuEndTime
+                let dur = (start > 0 && end > start) ? (end - start) * 1000.0 : 0.0
+                
+                return (mip, NodeTiming(name: name, shader: "blit.generateMipmaps", gpuMs: dur))
+            } else {
+                // Failed to create mip texture
+                mipCB.commit()
+            }
+        }
+        return nil
+    }
     
     /// Renders directly into a CVPixelBuffer (for export).
-    public func render(request: RenderRequest, to cvPixelBuffer: CVPixelBuffer, watermark: WatermarkSpec? = nil) async throws {
+    public func render(request: RenderRequest, to cvPixelBuffer: CVPixelBuffer, watermark: WatermarkSpec? = nil, captureNodeTimings: Bool = false) async throws {
+        let perNodeTimingEnabled = captureNodeTimings || (ProcessInfo.processInfo.environment["METAVIS_PERF_NODE_TIMING"] == "1")
+
         let dstW = CVPixelBufferGetWidth(cvPixelBuffer)
         let dstH = CVPixelBufferGetHeight(cvPixelBuffer)
 
-        guard let rootTex = try await internalRender(request: request, overrideWidth: dstW, overrideHeight: dstH) else {
+        // For export, make the terminal node's output pixel format match the destination when possible,
+        // so we can use a hardware blit copy (no swizzle/copy shaders).
+        let dstPixelFormat = CVPixelBufferGetPixelFormatType(cvPixelBuffer)
+        let desiredTerminalFormat: RenderNode.OutputSpec.PixelFormat = {
+            switch dstPixelFormat {
+            case kCVPixelFormatType_64RGBAHalf:
+                return .rgba16Float
+            case kCVPixelFormatType_32BGRA:
+                return .bgra8Unorm
+            default:
+                return .rgba16Float
+            }
+        }()
+
+        let exportGraph: RenderGraph = {
+            let nodes = request.graph.nodes.map { n -> RenderNode in
+                guard n.id == request.graph.rootNodeID else { return n }
+                let out = RenderNode.OutputSpec(resolution: .full, pixelFormat: desiredTerminalFormat)
+                return RenderNode(
+                    id: n.id,
+                    name: n.name,
+                    shader: n.shader,
+                    inputs: n.inputs,
+                    parameters: n.parameters,
+                    output: out,
+                    timing: n.timing
+                )
+            }
+            return RenderGraph(id: request.graph.id, nodes: nodes, rootNodeID: request.graph.rootNodeID)
+        }()
+
+        let exportRequest = RenderRequest(
+            id: request.id,
+            graph: exportGraph,
+            time: request.time,
+            quality: request.quality,
+            assets: request.assets,
+            renderFPS: request.renderFPS,
+            renderPolicy: request.renderPolicy,
+            edgePolicy: request.edgePolicy
+        )
+
+        guard let rootTex = try await internalRender(
+            request: exportRequest,
+            overrideWidth: dstW,
+            overrideHeight: dstH,
+            allowNonFloatTerminalOutputs: true,
+            captureNodeTimings: captureNodeTimings
+        ) else {
             throw RuntimeError("Failed to render frame.")
         }
 
@@ -339,25 +546,31 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
         // For Vertical Slice: Assuming RGBA buffer.
         
         // 1. Create Texture Cache
-        var textureCache: CVMetalTextureCache?
-        let result = CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &textureCache)
-        guard result == kCVReturnSuccess, let cache = textureCache else {
-             throw RuntimeError("Failed to create Texture Cache")
+           let clock = ContinuousClock()
+           let exportCPUStart = perNodeTimingEnabled ? clock.now : nil
+        let cache: CVMetalTextureCache
+        if let existing = self.maskTextureCache {
+            cache = existing
+        } else {
+            var textureCache: CVMetalTextureCache?
+            let result = CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &textureCache)
+            guard result == kCVReturnSuccess, let created = textureCache else {
+                throw RuntimeError("Failed to create CVMetalTextureCache (status=\(result))")
+            }
+            cache = created
         }
         
         // 2. Wrap CVPixelBuffer in Metal Texture
         let width = dstW
         let height = dstH
-        let pixelFormat = CVPixelBufferGetPixelFormatType(cvPixelBuffer)
-
         let metalPixelFormat: MTLPixelFormat
-        switch pixelFormat {
+        switch dstPixelFormat {
         case kCVPixelFormatType_64RGBAHalf:
             metalPixelFormat = .rgba16Float
         case kCVPixelFormatType_32BGRA:
             metalPixelFormat = .bgra8Unorm
         default:
-            throw RuntimeError("Unsupported CVPixelBuffer pixel format: \(pixelFormat)")
+            throw RuntimeError("Unsupported CVPixelBuffer pixel format: \(dstPixelFormat)")
         }
 
         var cvMetalTexture: CVMetalTexture?
@@ -378,53 +591,63 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
             throw RuntimeError("Failed to create Metal texture from PixelBuffer")
         }
 
-        // 3. Encode into pixel buffer
-        // Use compute kernels instead of blit.copy() since CVMetalTexture-backed textures
-        // may not advertise blit usage and can yield black/undefined results.
-        guard let buffer = commandQueue.makeCommandBuffer() else { return }
-        if pixelFormat == kCVPixelFormatType_64RGBAHalf {
-            guard let pso = try ensurePipelineState(name: "source_texture") else {
-                throw RuntimeError("Copy shader not available")
+        if perNodeTimingEnabled, let exportCPUStart {
+            let elapsed = clock.now - exportCPUStart
+            let c = elapsed.components
+            let seconds = Double(c.seconds) + (Double(c.attoseconds) / 1_000_000_000_000_000_000.0)
+            let ms = seconds * 1000.0
+            let part = String(format: "ExportCPU[cvpixelbuffer.wrap]=%.2fms", ms)
+            if let existing = lastNodeTimingReport, !existing.isEmpty {
+                lastNodeTimingReport = existing + " | " + part
+            } else {
+                lastNodeTimingReport = part
             }
-            guard let encoder = buffer.makeComputeCommandEncoder() else { return }
-            encoder.setComputePipelineState(pso)
-            encoder.setTexture(rootTex, index: 0)
-            encoder.setTexture(mtlTex, index: 1)
-
-            let tw = pso.threadExecutionWidth
-            let th = max(1, pso.maxTotalThreadsPerThreadgroup / tw)
-            encoder.dispatchThreads(
-                MTLSize(width: width, height: height, depth: 1),
-                threadsPerThreadgroup: MTLSize(width: tw, height: th, depth: 1)
-            )
-            encoder.endEncoding()
-        } else if pixelFormat == kCVPixelFormatType_32BGRA {
-            guard let pso = try ensurePipelineState(name: "rgba_to_bgra") else {
-                throw RuntimeError("Format conversion shader not available")
-            }
-            guard let encoder = buffer.makeComputeCommandEncoder() else { return }
-            encoder.setComputePipelineState(pso)
-            encoder.setTexture(rootTex, index: 0)
-            encoder.setTexture(mtlTex, index: 1)
-
-            let tw = pso.threadExecutionWidth
-            let th = max(1, pso.maxTotalThreadsPerThreadgroup / tw)
-            encoder.dispatchThreads(
-                MTLSize(width: width, height: height, depth: 1),
-                threadsPerThreadgroup: MTLSize(width: tw, height: th, depth: 1)
-            )
-            encoder.endEncoding()
         }
+
+        // 3. Encode into pixel buffer
+        // Prefer hardware blit copy (no swizzle-only shaders).
+        guard let buffer = commandQueue.makeCommandBuffer() else { return }
+        guard let blit = buffer.makeBlitCommandEncoder() else {
+            throw RuntimeError("Failed to create blit encoder for export")
+        }
+        blit.copy(from: rootTex, to: mtlTex)
+        blit.endEncoding()
 
         if let watermark {
             try encodeWatermark(watermark, commandBuffer: buffer, target: mtlTex)
         }
         
+        let exportSubmitStart = perNodeTimingEnabled ? clock.now : nil
         await withCheckedContinuation { continuation in
             buffer.addCompletedHandler { _ in
                 continuation.resume()
             }
             buffer.commit()
+        }
+
+        if perNodeTimingEnabled {
+            let start = buffer.gpuStartTime
+            let end = buffer.gpuEndTime
+            let gpuMs = (start > 0 && end > 0 && end >= start) ? (end - start) * 1000.0 : 0.0
+
+            var parts: [String] = []
+            parts.reserveCapacity(2)
+            parts.append(String(format: "ExportGPU[blit+watermark]=%.2fms", gpuMs))
+
+            if let exportSubmitStart {
+                let elapsed = clock.now - exportSubmitStart
+                let c = elapsed.components
+                let seconds = Double(c.seconds) + (Double(c.attoseconds) / 1_000_000_000_000_000_000.0)
+                let wallMs = seconds * 1000.0
+                parts.append(String(format: "ExportWall[submit->complete]=%.2fms", wallMs))
+            }
+
+            let suffix = parts.joined(separator: " | ")
+            if let existing = lastNodeTimingReport, !existing.isEmpty {
+                lastNodeTimingReport = existing + " | " + suffix
+            } else {
+                lastNodeTimingReport = suffix
+            }
         }
 
         texturePool.checkin(rootTex)
@@ -466,25 +689,124 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
     private func internalRender(
         request: RenderRequest,
         overrideWidth: Int? = nil,
-        overrideHeight: Int? = nil
+        overrideHeight: Int? = nil,
+        allowNonFloatTerminalOutputs: Bool = false,
+        captureNodeTimings: Bool = false
     ) async throws -> MTLTexture? {
         if !isConfigured {
             try await configure()
         }
 
+        // Sprint 24k integration hardening:
+        // HDR display targets depend on kernels that may not exist in an older bundled metallib.
+        // If missing, recompile from bundled sources so opt-in HDR renders are functional.
+        if request.displayTarget == .hdrPQ1000 {
+            let required = "odt_acescg_to_pq1000"
+            let hasFn = library?.makeFunction(name: required) != nil
+            if !hasFn {
+                logDebug("⚠️ Missing '\(required)' in current Metal library; recompiling from bundled sources")
+                self.library = try await compileLibraryFromBundledMetalSources(files: [
+                    "ColorSpace",
+                    "ACES",
+                    "Procedural",
+                    "Noise",
+                    "FaceEnhance",
+                    "FaceMaskGenerator",
+                    "MaskedBlur",
+                    "MaskedColorGrade",
+                    "FormatConversion",
+                    "Compositor",
+                    "Blur",
+                    "ToneMapping",
+                    "ColorGrading",
+                    "Macbeth",
+                    "SMPTE",
+                    "ZonePlate",
+                    "StarField",
+                    "VolumetricNebula",
+                    "Watermark"
+                ], bundle: GraphicsBundleHelper.bundle)
+                pipelineStates.removeAll(keepingCapacity: true)
+                // Warm the required ODT pipeline immediately so failure is explicit.
+                guard try ensurePipelineState(name: required) != nil else {
+                    throw RuntimeError("Required HDR ODT kernel missing after recompilation: \(required)")
+                }
+            }
+        }
+
         renderWarnings.removeAll(keepingCapacity: true)
 
-        guard let buffer = commandQueue.makeCommandBuffer() else {
-            throw RuntimeError("CommandBuffer failed")
+        let perNodeTimingEnabled = captureNodeTimings || (ProcessInfo.processInfo.environment["METAVIS_PERF_NODE_TIMING"] == "1")
+        lastNodeTimingReport = nil
+
+        let sharedBuffer: MTLCommandBuffer?
+        if perNodeTimingEnabled {
+            sharedBuffer = nil
+        } else {
+            guard let b = commandQueue.makeCommandBuffer() else {
+                throw RuntimeError("CommandBuffer failed")
+            }
+            sharedBuffer = b
         }
         
         var textureMap: [UUID: MTLTexture] = [:]
 
+        // Ensure deterministic and correct execution ordering even if the graph's node
+        // array was assembled from unordered collections (e.g. dictionaries/sets).
+        // We still render every node in the graph (not just reachable ones), but we
+        // guarantee that a node's inputs are executed before the node.
+        let orderedNodes: [RenderNode] = {
+            var nodeByID: [UUID: RenderNode] = [:]
+            nodeByID.reserveCapacity(request.graph.nodes.count)
+            for node in request.graph.nodes {
+                nodeByID[node.id] = node
+            }
+
+            enum VisitState { case visiting, visited }
+            var stateByID: [UUID: VisitState] = [:]
+            stateByID.reserveCapacity(request.graph.nodes.count)
+            var out: [RenderNode] = []
+            out.reserveCapacity(request.graph.nodes.count)
+
+            func dfs(_ node: RenderNode) throws {
+                if let state = stateByID[node.id] {
+                    switch state {
+                    case .visited:
+                        return
+                    case .visiting:
+                        throw RuntimeError("RenderGraph cycle detected at node: \(node.name) [\(node.shader)]")
+                    }
+                }
+
+                stateByID[node.id] = .visiting
+                for inputID in node.inputs.values {
+                    if let dep = nodeByID[inputID] {
+                        try dfs(dep)
+                    }
+                }
+                stateByID[node.id] = .visited
+                out.append(node)
+            }
+
+            do {
+                for node in request.graph.nodes {
+                    try dfs(node)
+                }
+            } catch {
+                // Fallback to provided ordering if something goes wrong, but keep the
+                // failure visible to help diagnose graph construction problems.
+                logDebug("⚠️ Topological sort failed: \(error). Falling back to original node order.")
+                return request.graph.nodes
+            }
+
+            return out
+        }()
+
         // Track how many downstream consumers each node output has so we can reuse
         // intermediate textures within a single frame and avoid GPU OOM.
         var remainingUses: [UUID: Int] = [:]
-        remainingUses.reserveCapacity(request.graph.nodes.count)
-        for node in request.graph.nodes {
+        remainingUses.reserveCapacity(orderedNodes.count)
+        for node in orderedNodes {
             for inputID in node.inputs.values {
                 remainingUses[inputID, default: 0] += 1
             }
@@ -511,6 +833,7 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
                 width: tex.width,
                 height: tex.height,
                 pixelFormat: tex.pixelFormat,
+                mipLevelCount: max(1, tex.mipmapLevelCount),
                 usageRaw: UInt64(tex.usage.rawValue),
                 storageModeRaw: UInt64(tex.storageMode.rawValue)
             )
@@ -544,42 +867,187 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
             }
         }
         
-        for node in request.graph.nodes {
-            if node.shader == "source_texture" {
-                try await prepareSourceTexture(for: node, request: request, width: width, height: height, textureMap: &textureMap)
-            }
-            if node.shader == "source_person_mask" {
-                try await preparePersonMaskTexture(for: node, request: request, width: width, height: height, textureMap: &textureMap)
-            }
 
-            try encodeNode(
-                node,
-                commandBuffer: buffer,
-                textureMap: &textureMap,
-                width: width,
-                height: height,
-                reusableByKey: &reusableByKey,
-                retainForFrame: retainForFrame
-            )
 
-            // After encoding the node, decrement remaining uses for its inputs.
-            for inputID in node.inputs.values {
-                guard let count = remainingUses[inputID] else { continue }
-                let next = count - 1
-                remainingUses[inputID] = next
-                if next <= 0 {
-                    releaseIfDead(inputID)
+        func commitAndAwait(_ cb: MTLCommandBuffer) async {
+            await withCheckedContinuation { continuation in
+                cb.addCompletedHandler { _ in
+                    continuation.resume()
                 }
+                cb.commit()
             }
         }
-        
 
-        
-        await withCheckedContinuation { continuation in
-            buffer.addCompletedHandler { _ in
-                continuation.resume()
+        func gpuMs(_ cb: MTLCommandBuffer) -> Double? {
+            let start = cb.gpuStartTime
+            let end = cb.gpuEndTime
+            guard start > 0, end > 0, end >= start else { return nil }
+            return (end - start) * 1000.0
+        }
+
+        if perNodeTimingEnabled {
+            var timings: [NodeTiming] = []
+            timings.reserveCapacity(orderedNodes.count + 4)
+
+            for node in orderedNodes {
+                let nodeSize = node.resolvedOutputSize(baseWidth: width, baseHeight: height)
+                let outputConsumerCount = remainingUses[node.id] ?? 0
+
+                if node.shader == "source_texture" {
+                    try await prepareSourceTexture(for: node, request: request, width: nodeSize.width, height: nodeSize.height, textureMap: &textureMap)
+                }
+                if node.shader == "source_person_mask" {
+                    try await preparePersonMaskTexture(for: node, request: request, width: nodeSize.width, height: nodeSize.height, textureMap: &textureMap)
+                }
+
+                // Split mip generation from the shader dispatch for clearer attribution.
+                var input0Override: MTLTexture?
+                var input1Override: MTLTexture? // New override slot for texture(1)
+
+                if node.shader == "fx_mip_blur" {
+                    // Standard blur: Input 0 needs mips.
+                    if let inputID = (node.inputs["input"] ?? node.inputs["source"]), let inputTex = textureMap[inputID] {
+                        if let shared = sharedBuffer {
+                            // Fast path: encode on shared buffer, no wait.
+                            let fullLevels = max(1, Int(floor(log2(Double(max(1, max(inputTex.width, inputTex.height))))) + 1))
+                            if let mip = makeMipmappedCopy(source: inputTex, commandBuffer: shared, mipLevelCount: fullLevels) {
+                                input0Override = mip
+                                retainForFrame(mip)
+                            }
+                        } else {
+                            // Slow path: independent buffer for timing.
+                            if let (mip, timing) = try await generateMips(for: inputTex, name: "MipGen.Blur") {
+                                input0Override = mip
+                                retainForFrame(mip)
+                                timings.append(timing)
+                            }
+                        }
+                    }
+                } else if node.shader == "fx_masked_blur" {
+                    // Masked Blur (Dual Input): Input 1 (blur_base) needs mips.
+                    if let inputID = node.inputs["blur_base"], let inputTex = textureMap[inputID] {
+                        if let shared = sharedBuffer {
+                             // Fast path
+                             let fullLevels = max(1, Int(floor(log2(Double(max(1, max(inputTex.width, inputTex.height))))) + 1))
+                             if let mip = makeMipmappedCopy(source: inputTex, commandBuffer: shared, mipLevelCount: fullLevels) {
+                                 input1Override = mip
+                                 retainForFrame(mip)
+                             }
+                        } else {
+                             // Slow path
+                             if let (mip, timing) = try await generateMips(for: inputTex, name: "MipGen.MaskedBlur") {
+                                 input1Override = mip
+                                 retainForFrame(mip)
+                                 timings.append(timing)
+                             }
+                        }
+                    } else if let inputID = node.inputs["input"] ?? node.inputs["source"], let inputTex = textureMap[inputID] {
+                        // Legacy Fallback
+                        if let shared = sharedBuffer {
+                             let fullLevels = max(1, Int(floor(log2(Double(max(1, max(inputTex.width, inputTex.height))))) + 1))
+                             if let mip = makeMipmappedCopy(source: inputTex, commandBuffer: shared, mipLevelCount: fullLevels) {
+                                 input0Override = mip
+                                 retainForFrame(mip)
+                             }
+                        } else {
+                             if let (mip, timing) = try await generateMips(for: inputTex, name: "MipGen.MaskedBlurLegacy") {
+                                 input0Override = mip
+                                 retainForFrame(mip)
+                                 timings.append(timing)
+                             }
+                        }
+                    }
+                }
+
+                guard let nodeCB = commandQueue.makeCommandBuffer() else {
+                    throw RuntimeError("CommandBuffer failed")
+                }
+
+                try encodeNode(
+                    node,
+                    commandBuffer: nodeCB,
+                    textureMap: &textureMap,
+                    width: nodeSize.width,
+                    height: nodeSize.height,
+                    edgePolicy: request.edgePolicy,
+                    outputConsumerCount: outputConsumerCount,
+                    allowNonFloatTerminalOutputs: allowNonFloatTerminalOutputs,
+                    reusableByKey: &reusableByKey,
+                    retainForFrame: retainForFrame,
+                    input0Override: input0Override,
+                    input1Override: input1Override
+                )
+
+                // After encoding the node, decrement remaining uses for its inputs.
+                for inputID in node.inputs.values {
+                    guard let count = remainingUses[inputID] else { continue }
+                    let next = count - 1
+                    remainingUses[inputID] = next
+                    if next <= 0 {
+                        releaseIfDead(inputID)
+                    }
+                }
+
+                await commitAndAwait(nodeCB)
+                timings.append(NodeTiming(name: node.name, shader: node.shader, gpuMs: gpuMs(nodeCB)))
             }
-            buffer.commit()
+
+            var parts: [String] = []
+            parts.reserveCapacity(timings.count)
+            for t in timings {
+                if let ms = t.gpuMs {
+                    parts.append(String(format: "%@[%@]=%.2fms", t.name, t.shader, ms))
+                } else {
+                    parts.append("\(t.name)[\(t.shader)]=n/a")
+                }
+            }
+            lastNodeTimingReport = parts.joined(separator: " | ")
+        } else {
+            guard let buffer = sharedBuffer else {
+                throw RuntimeError("CommandBuffer missing")
+            }
+
+            for node in orderedNodes {
+                let nodeSize = node.resolvedOutputSize(baseWidth: width, baseHeight: height)
+                let outputConsumerCount = remainingUses[node.id] ?? 0
+
+                if node.shader == "source_texture" {
+                    try await prepareSourceTexture(for: node, request: request, width: nodeSize.width, height: nodeSize.height, textureMap: &textureMap)
+                }
+                if node.shader == "source_person_mask" {
+                    try await preparePersonMaskTexture(for: node, request: request, width: nodeSize.width, height: nodeSize.height, textureMap: &textureMap)
+                }
+
+                try encodeNode(
+                    node,
+                    commandBuffer: buffer,
+                    textureMap: &textureMap,
+                    width: nodeSize.width,
+                    height: nodeSize.height,
+                    edgePolicy: request.edgePolicy,
+                    outputConsumerCount: outputConsumerCount,
+                    allowNonFloatTerminalOutputs: allowNonFloatTerminalOutputs,
+                    reusableByKey: &reusableByKey,
+                    retainForFrame: retainForFrame
+                )
+
+                // After encoding the node, decrement remaining uses for its inputs.
+                for inputID in node.inputs.values {
+                    guard let count = remainingUses[inputID] else { continue }
+                    let next = count - 1
+                    remainingUses[inputID] = next
+                    if next <= 0 {
+                        releaseIfDead(inputID)
+                    }
+                }
+            }
+
+            await withCheckedContinuation { continuation in
+                buffer.addCompletedHandler { _ in
+                    continuation.resume()
+                }
+                buffer.commit()
+            }
         }
 
         let rootTex = textureMap[request.graph.rootNodeID]
@@ -801,9 +1269,64 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
         textureMap: inout [UUID: MTLTexture],
         width: Int,
         height: Int,
+        edgePolicy: RenderRequest.EdgeCompatibilityPolicy,
+        outputConsumerCount: Int,
+        allowNonFloatTerminalOutputs: Bool,
         reusableByKey: inout [TexturePool.Key: [MTLTexture]],
-        retainForFrame: (MTLTexture) -> Void
+        retainForFrame: (MTLTexture) -> Void,
+        input0Override: MTLTexture? = nil,
+        input1Override: MTLTexture? = nil
     ) throws {
+        // Hardware/API replacement: clear nodes should not exist as compute shaders.
+        // Use render-pass loadAction clears so we stay tile-friendly on TBDR GPUs.
+        if node.shader == "clear_color" {
+            // Allocate a render-target-capable color texture.
+            let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: width, height: height, mipmapped: false)
+            desc.usage = [.shaderRead, .shaderWrite, .renderTarget]
+            desc.storageMode = .private
+            guard let destTex = device.makeTexture(descriptor: desc) else {
+                throw RuntimeError("Failed to allocate clear render target")
+            }
+            retainForFrame(destTex)
+
+            let rp = MTLRenderPassDescriptor()
+            rp.colorAttachments[0].texture = destTex
+            rp.colorAttachments[0].loadAction = .clear
+            rp.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+            rp.colorAttachments[0].storeAction = .store
+
+            guard let enc = commandBuffer.makeRenderCommandEncoder(descriptor: rp) else {
+                throw RuntimeError("Failed to create render encoder for clear")
+            }
+            enc.endEncoding()
+            textureMap[node.id] = destTex
+            return
+        }
+
+        // Hardware/API replacement: depth_one should be a depthAttachment clear.
+        if node.shader == "depth_one" {
+            let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .depth32Float, width: width, height: height, mipmapped: false)
+            desc.usage = [.shaderRead, .renderTarget]
+            desc.storageMode = .private
+            guard let depthTex = device.makeTexture(descriptor: desc) else {
+                throw RuntimeError("Failed to allocate depth render target")
+            }
+            retainForFrame(depthTex)
+
+            let rp = MTLRenderPassDescriptor()
+            rp.depthAttachment.texture = depthTex
+            rp.depthAttachment.loadAction = .clear
+            rp.depthAttachment.clearDepth = 1.0
+            rp.depthAttachment.storeAction = .store
+
+            guard let enc = commandBuffer.makeRenderCommandEncoder(descriptor: rp) else {
+                throw RuntimeError("Failed to create render encoder for depth clear")
+            }
+            enc.endEncoding()
+            textureMap[node.id] = depthTex
+            return
+        }
+
         if node.shader == "waveform_monitor" {
              // Special 2-Pass Waveform Generation
              
@@ -874,54 +1397,181 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
             logDebug("❌ PSO missing for: \(node.shader)")
             return
         }
-        
-        guard let encoder = commandBuffer.makeComputeCommandEncoder() else { return }
-        encoder.setComputePipelineState(pso)
-        
-        // A. Bind Inputs
+
+        func isAdapterShader(_ shader: String) -> Bool {
+            shader == "resize_bilinear_rgba16f" || shader == "resize_bicubic_rgba16f"
+        }
+
+        func shouldSkipAutoResize(inputKey: String) -> Bool {
+            // Masks are sampled in normalized coordinates in current shaders and do not require
+            // identical pixel dimensions.
+            inputKey == "mask" || inputKey == "faceMask"
+        }
+
+        func resizeToNodeSizeRGBA16F(_ source: MTLTexture, kernelName: String) throws -> MTLTexture {
+            guard let resizePSO = try ensurePipelineState(name: kernelName) else {
+                throw RuntimeError("Missing PSO: \(kernelName)")
+            }
+
+            let usage: MTLTextureUsage = [.shaderRead, .shaderWrite]
+            guard let dest = texturePool.checkout(width: width, height: height, pixelFormat: .rgba16Float, usage: usage) else {
+                throw RuntimeError("Failed to allocate resize dest texture (\(width)x\(height))")
+            }
+            retainForFrame(dest)
+
+            guard let enc = commandBuffer.makeComputeCommandEncoder() else {
+                throw RuntimeError("Failed to create resize command encoder")
+            }
+            enc.setComputePipelineState(resizePSO)
+            enc.setTexture(source, index: 0)
+            enc.setTexture(dest, index: 1)
+
+            let w = resizePSO.threadExecutionWidth
+            let h = max(1, resizePSO.maxTotalThreadsPerThreadgroup / w)
+            let threadsPerGroup = MTLSizeMake(w, h, 1)
+            let threadsPerGrid = MTLSizeMake(dest.width, dest.height, 1)
+            enc.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerGroup)
+            enc.endEncoding()
+
+            return dest
+        }
+
+        func adaptInputIfNeeded(_ tex: MTLTexture, inputKey: String) throws -> MTLTexture {
+            guard tex.width != width || tex.height != height else { return tex }
+            guard !isAdapterShader(node.shader) else { return tex }
+            guard !shouldSkipAutoResize(inputKey: inputKey) else { return tex }
+
+            switch edgePolicy {
+            case .requireExplicitAdapters:
+                renderWarnings.append(
+                    "size_mismatch node=\(node.shader) input=\(inputKey) inputSize=\(tex.width)x\(tex.height) nodeSize=\(width)x\(height) (insert resize_bilinear_rgba16f)"
+                )
+                return tex
+            case .autoResizeBilinear:
+                renderWarnings.append(
+                    "auto_resize node=\(node.shader) input=\(inputKey) \(tex.width)x\(tex.height)->\(width)x\(height)"
+                )
+                return try resizeToNodeSizeRGBA16F(tex, kernelName: "resize_bilinear_rgba16f")
+            case .autoResizeBicubic:
+                renderWarnings.append(
+                    "auto_resize_bicubic node=\(node.shader) input=\(inputKey) \(tex.width)x\(tex.height)->\(width)x\(height)"
+                )
+                return try resizeToNodeSizeRGBA16F(tex, kernelName: "resize_bicubic_rgba16f")
+            }
+        }
+
+        struct PendingBinding {
+            var index: Int
+            var key: String
+            var texture: MTLTexture
+        }
+
+        var pendingBindings: [PendingBinding] = []
+        pendingBindings.reserveCapacity(max(1, node.inputs.count))
+
+        // A. Gather Inputs
         // Convention: Texture Index 0 is Source, unless shader requires multiple inputs.
         if node.shader == "compositor_crossfade" || node.shader == "compositor_dip" || node.shader == "compositor_wipe" {
             if let aID = node.inputs["clipA"], let aTex = textureMap[aID] {
-                encoder.setTexture(aTex, index: 0)
+                pendingBindings.append(PendingBinding(index: 0, key: "clipA", texture: aTex))
             }
             if let bID = node.inputs["clipB"], let bTex = textureMap[bID] {
-                encoder.setTexture(bTex, index: 1)
+                pendingBindings.append(PendingBinding(index: 1, key: "clipB", texture: bTex))
             }
         } else if node.shader == "compositor_alpha_blend" {
             if let layer1ID = node.inputs["layer1"], let layer1Tex = textureMap[layer1ID] {
-                encoder.setTexture(layer1Tex, index: 0)
+                pendingBindings.append(PendingBinding(index: 0, key: "layer1", texture: layer1Tex))
             }
             if let layer2ID = node.inputs["layer2"], let layer2Tex = textureMap[layer2ID] {
-                encoder.setTexture(layer2Tex, index: 1)
+                pendingBindings.append(PendingBinding(index: 1, key: "layer2", texture: layer2Tex))
             }
         } else if node.shader == "fx_volumetric_nebula" {
             // VolumetricNebula.metal expects depthTexture at texture(0)
             if let depthID = node.inputs["depth"], let depthTex = textureMap[depthID] {
-                encoder.setTexture(depthTex, index: 0)
+                pendingBindings.append(PendingBinding(index: 0, key: "depth", texture: depthTex))
             }
         } else if node.shader == "fx_volumetric_composite" {
             // VolumetricNebula.metal composite expects scene at texture(0) and volumetric at texture(1)
             if let sceneID = node.inputs["scene"], let sceneTex = textureMap[sceneID] {
-                encoder.setTexture(sceneTex, index: 0)
+                pendingBindings.append(PendingBinding(index: 0, key: "scene", texture: sceneTex))
             }
             if let volID = node.inputs["volumetric"], let volTex = textureMap[volID] {
-                encoder.setTexture(volTex, index: 1)
+                pendingBindings.append(PendingBinding(index: 1, key: "volumetric", texture: volTex))
             }
         } else if node.shader == "source_texture" || node.shader == "source_person_mask" {
             // Video source nodes: we preloaded the source texture into textureMap[node.id] before encoding.
             if let src = textureMap[node.id] {
-                encoder.setTexture(src, index: 0)
+                pendingBindings.append(PendingBinding(index: 0, key: "source", texture: src))
+            }
+        } else if node.shader == "fx_masked_blur" {
+            // MaskedBlur.metal signature (Updated for Dual Input):
+            //   sharpTexture  [[texture(0)]]
+            //   blurryTexture [[texture(1)]]
+            //   maskTexture   [[texture(2)]]
+            //   outputTexture [[texture(3)]]
+            
+            // 0: Sharp Source
+            // Legacy/Benchmark fallback: if input0Override present (from legacy path), use it.
+            // But normally input0 should be the CLEAN source.
+            if let inputID = (node.inputs["input"] ?? node.inputs["source"]), let inputTex = textureMap[inputID] {
+                 let tex = input0Override ?? inputTex
+                 pendingBindings.append(PendingBinding(index: 0, key: "input", texture: tex))
+            }
+
+            // 1: Blurry Source (Mipmapped)
+            if let override = input1Override {
+                // Priority: Use the generated mip chain.
+                pendingBindings.append(PendingBinding(index: 1, key: "blur_base_override", texture: override))
+            } else if let blurID = node.inputs["blur_base"], let blurTex = textureMap[blurID] {
+                // If no mip override (maybe generateMips failed?), try the explicit 'blur_base' input.
+                pendingBindings.append(PendingBinding(index: 1, key: "blur_base", texture: blurTex))
+            } else {
+                 // Fallback: If no blur_base provided (legacy mode), we reused input0Override as the 'blurry' Texture?
+                 // But wait, the kernel expects TWO textures.
+                 // If we are in legacy mode, we might need to bind 'input' as 'blurry' too?
+                 // This is dirty but keeps the benchmark from hanging the GPU.
+                 if let inputID = (node.inputs["input"] ?? node.inputs["source"]), let inputTex = textureMap[inputID] {
+                     let tex = input0Override ?? inputTex
+                     pendingBindings.append(PendingBinding(index: 1, key: "input_as_blur", texture: tex))
+                 }
+            }
+
+            // 2: Mask
+            if let maskID = node.inputs["mask"], let maskTex = textureMap[maskID] {
+                pendingBindings.append(PendingBinding(index: 2, key: "mask", texture: maskTex))
+            }
+        } else if node.shader == "fx_mip_blur" {
+            // Blur.metal signature:
+            //   sourceTexture [[texture(0)]] (mipmapped)
+            //   destTexture   [[texture(1)]]
+            if let override = input0Override {
+                pendingBindings.append(PendingBinding(index: 0, key: "input", texture: override))
+            } else if let inputID = (node.inputs["input"] ?? node.inputs["source"]), let inputTex = textureMap[inputID] {
+                let fullLevels = max(1, Int(floor(log2(Double(max(1, max(inputTex.width, inputTex.height))))) + 1))
+                let radius: Float = {
+                    if let v = node.parameters["radius"], case .float(let r) = v { return Float(r) }
+                    return 0
+                }()
+                let desiredMaxLod = max(0.0, log2(max(radius, 1.0)))
+                let neededLevels = min(fullLevels, max(1, Int(ceil(Double(desiredMaxLod))) + 2))
+
+                if let mip = makeMipmappedCopy(source: inputTex, commandBuffer: commandBuffer, mipLevelCount: neededLevels) {
+                    retainForFrame(mip)
+                    pendingBindings.append(PendingBinding(index: 0, key: "input", texture: mip))
+                } else {
+                    pendingBindings.append(PendingBinding(index: 0, key: "input", texture: inputTex))
+                }
             }
         } else if let inputID = (node.inputs["input"] ?? node.inputs["source"]) {
             if let inputTex = textureMap[inputID] {
-                encoder.setTexture(inputTex, index: 0)
+                pendingBindings.append(PendingBinding(index: 0, key: "input", texture: inputTex))
             } else {
                 // If a node expects an input but upstream isn't present, bind a deterministic black texture
                 // so downstream nodes can still execute (tests use this for 1-node graphs).
                 let blackDesc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: width, height: height, mipmapped: false)
                 blackDesc.usage = [.shaderRead, .shaderWrite]
                 if let black = device.makeTexture(descriptor: blackDesc) {
-                    encoder.setTexture(black, index: 0)
+                    pendingBindings.append(PendingBinding(index: 0, key: "input_missing", texture: black))
                 }
             }
         } else if node.shader == "source_linear_ramp" || node.shader == "source_test_color" {
@@ -935,7 +1585,7 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
             let extraStartIndex: Int = (node.shader == "compositor_crossfade" || node.shader == "compositor_dip" || node.shader == "compositor_wipe" || node.shader == "compositor_alpha_blend") ? 3 : 2
 
             var extraKeys = Array(node.inputs.keys)
-            extraKeys.removeAll(where: { $0 == "input" || $0 == "source" })
+            extraKeys.removeAll(where: { $0 == "input" || $0 == "source" || (node.shader == "fx_masked_blur" && ($0 == "mask" || $0 == "blur_base")) })
 
             func priority(_ k: String) -> (Int, String) {
                 if k == "mask" || k == "faceMask" { return (0, k) }
@@ -946,20 +1596,55 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
             var texIndex = extraStartIndex
             for key in extraKeys {
                 guard let inputID = node.inputs[key], let tex = textureMap[inputID] else { continue }
-                encoder.setTexture(tex, index: texIndex)
+                pendingBindings.append(PendingBinding(index: texIndex, key: key, texture: tex))
                 texIndex += 1
             }
         }
-        
-        // Helper to create texture with request resolution
-        // Use arguments passed to function
+
+        // Apply edge policy (resize inputs if required) BEFORE opening the main encoder.
+        if edgePolicy != .requireExplicitAdapters || !pendingBindings.isEmpty {
+            for i in pendingBindings.indices {
+                pendingBindings[i].texture = try adaptInputIfNeeded(pendingBindings[i].texture, inputKey: pendingBindings[i].key)
+            }
+        }
         
         // B. Bind Outputs
-        let outputUsage: MTLTextureUsage = [.shaderRead, .shaderWrite]
+        let outputUsage: MTLTextureUsage = (node.shader == "compositor_crossfade") ? [.renderTarget, .shaderRead, .shaderWrite] : [.shaderRead, .shaderWrite]
+
+        let requestedOutputPixelFormat: MTLPixelFormat = {
+            switch node.resolvedOutputPixelFormat() {
+            case .rgba16Float: return .rgba16Float
+            case .bgra8Unorm: return .bgra8Unorm
+            case .rgba8Unorm: return .rgba8Unorm
+            case .r8Unorm: return .r8Unorm
+            case .depth32Float: return .depth32Float
+            }
+        }()
+
+        // Today most kernels are authored against `texture2d<float, ...>` and the working pipeline
+        // expects float intermediates. Non-float outputs are only safe for terminal nodes (no
+        // downstream consumers), and only for formats we explicitly support today.
+        let outputPixelFormat: MTLPixelFormat = {
+            if requestedOutputPixelFormat == .rgba16Float { return .rgba16Float }
+
+            let isTerminal = outputConsumerCount <= 0
+            let isSupportedNonFloat = (requestedOutputPixelFormat == .bgra8Unorm || requestedOutputPixelFormat == .rgba8Unorm)
+
+            if allowNonFloatTerminalOutputs && isTerminal && isSupportedNonFloat {
+                return requestedOutputPixelFormat
+            }
+
+            renderWarnings.append(
+                "output_format_override node=\(node.shader) requested=\(requestedOutputPixelFormat) using=rgba16Float"
+            )
+            return .rgba16Float
+        }()
+
         let outputKey = TexturePool.Key(
             width: width,
             height: height,
-            pixelFormat: .rgba16Float,
+            pixelFormat: outputPixelFormat,
+            mipLevelCount: 1,
             usageRaw: UInt64(outputUsage.rawValue),
             storageModeRaw: UInt64(MTLStorageMode.private.rawValue)
         )
@@ -968,17 +1653,83 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
             reusableByKey[outputKey] = bucket
             destTex = reused
         } else {
-            guard let fresh = texturePool.checkout(width: width, height: height, pixelFormat: .rgba16Float, usage: outputUsage) else {
+            guard let fresh = texturePool.checkout(width: width, height: height, pixelFormat: outputPixelFormat, usage: outputUsage) else {
                 logDebug("❌ Texture allocation failed (w=\(width) h=\(height)) for node \(node.name) [\(node.shader)]")
                 return
             }
             destTex = fresh
         }
         retainForFrame(destTex)
+        textureMap[node.id] = destTex
+
+        // Special-case: Crossfade via render pipeline blending (mandated perf architecture).
+        if node.shader == "compositor_crossfade" {
+            let t: Float = {
+                if let val = node.parameters["mix"], case .float(let v) = val { return Float(v) }
+                return 0
+            }()
+            let tt = max(0.0, min(1.0, t))
+
+            // Resolve inputs (post-adaptation).
+            let clipA = pendingBindings.first(where: { $0.index == 0 })?.texture
+            let clipB = pendingBindings.first(where: { $0.index == 1 })?.texture
+
+            // If either side is missing, degrade deterministically.
+            let aTex: MTLTexture
+            let bTex: MTLTexture
+            if let a = clipA, let b = clipB {
+                aTex = a
+                bTex = b
+            } else if let a = clipA {
+                aTex = a
+                bTex = a
+            } else if let b = clipB {
+                aTex = b
+                bTex = b
+            } else {
+                return
+            }
+
+                if let copyPSO = try ensureCrossfadeRenderPipeline(pixelFormat: destTex.pixelFormat, blendingEnabled: false),
+                    let blendPSO = try ensureCrossfadeRenderPipeline(pixelFormat: destTex.pixelFormat, blendingEnabled: true) {
+                    let rp = MTLRenderPassDescriptor()
+                    rp.colorAttachments[0].texture = destTex
+                    rp.colorAttachments[0].loadAction = .dontCare
+                    rp.colorAttachments[0].storeAction = .store
+
+                    if let re = commandBuffer.makeRenderCommandEncoder(descriptor: rp) {
+                        re.setRenderPipelineState(copyPSO)
+                        re.setFragmentTexture(aTex, index: 0)
+                        re.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+
+                        re.setRenderPipelineState(blendPSO)
+                        re.setBlendColor(red: tt, green: tt, blue: tt, alpha: tt)
+                        re.setFragmentTexture(bTex, index: 0)
+                        re.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+
+                        re.endEncoding()
+                        return
+                    }
+            }
+        }
+
+        guard let encoder = commandBuffer.makeComputeCommandEncoder() else { return }
+        encoder.setComputePipelineState(pso)
+
+        for b in pendingBindings {
+            encoder.setTexture(b.texture, index: b.index)
+        }
+
         let outputTextureIndex: Int
         if node.shader == "fx_generate_face_mask" {
             // FaceMaskGenerator.metal uses output texture(0).
             outputTextureIndex = 0
+        } else if node.shader == "fx_masked_blur" {
+            // MaskedBlur.metal writes to output texture(3).
+            outputTextureIndex = 3
+        } else if node.shader == "fx_mip_blur" {
+            // Blur.metal fx_mip_blur writes to output texture(1).
+            outputTextureIndex = 1
         } else if node.shader == "fx_volumetric_composite" {
             // VolumetricNebula.metal composite uses output texture(2).
             outputTextureIndex = 2
@@ -990,7 +1741,6 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
             outputTextureIndex = 1
         }
         encoder.setTexture(destTex, index: outputTextureIndex)
-        textureMap[node.id] = destTex
         
         // C. Bind Parameters (Uniforms)
         // Global Parameter Map (Naive Implementation)
@@ -1026,12 +1776,38 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
             bindFloat("time", 0)
         } else if node.shader == "fx_blur_h" || node.shader == "fx_blur_v" {
             bindFloat("radius", 0)
+        } else if node.shader == "fx_masked_blur" {
+            // MaskedBlur.metal:
+            //   blurRadius [[buffer(0)]]
+            //   maskThreshold [[buffer(1)]]
+            bindFloat("radius", 0)
+            bindFloat("threshold", 1)
         } else if node.shader == "fx_tonemap_aces" {
             // ToneMapping.metal: constant float &exposure [[buffer(0)]]
             bindFloat("exposure", 0)
         } else if node.shader == "fx_tonemap_pq" {
             // ToneMapping.metal: constant float &maxNits [[buffer(0)]]
             bindFloat("maxNits", 0)
+        } else if node.shader == "odt_acescg_to_pq1000_tuned" {
+            // ToneMapping.metal: tuned HDR ODT
+            //   maxNits [[buffer(0)]]
+            //   pqScale [[buffer(1)]]
+            //   highlightDesat [[buffer(2)]]
+            //   kneeNits [[buffer(3)]]
+            //   gamutCompress [[buffer(4)]]
+            bindFloat("maxNits", 0)
+            bindFloat("pqScale", 1)
+            bindFloat("highlightDesat", 2)
+            bindFloat("kneeNits", 3)
+            bindFloat("gamutCompress", 4)
+        } else if node.shader == "odt_acescg_to_rec709_studio_tuned" {
+            // ColorSpace.metal: tuned SDR ODT
+            //   gamutCompress [[buffer(0)]]
+            //   highlightDesatStrength [[buffer(1)]]
+            //   redModStrength [[buffer(2)]]
+            bindFloat("gamutCompress", 0)
+            bindFloat("highlightDesatStrength", 1)
+            bindFloat("redModStrength", 2)
         } else if node.shader == "fx_color_grade_simple" {
             // ColorGrading.metal: constant ColorGradeParams &params [[buffer(0)]]
             struct ColorGradeParams {
@@ -1197,28 +1973,28 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
                 encoder.setTexture(maskTex, index: 2)
             }
             
-        } else if node.shader == "lut_apply_3d" {
+        } else if node.shader == "lut_apply_3d" || node.shader == "lut_apply_3d_rgba16f" {
             // Handle LUT Parameter (expects 'lut' as .data)
             if let val = node.parameters["lut"], case .data(let lutData) = val {
+                let lutKey = fnv1a64(lutData)
                 // Check Cache
-                var lutTex = lutCache[node.id]
+                var lutTex = lutCache[lutKey]
                 if lutTex == nil {
                     // Parse and Create
                     if let (size, payload) = LUTHelper.parseCube(data: lutData) {
                         let desc = MTLTextureDescriptor()
                         desc.textureType = .type3D
-                        desc.pixelFormat = .rgba32Float // Usually LUTs are RGB, but Metal textures need align? RGB32Float is valid on Mac.
-                        // Actually 'float3' data means packed RGB. Texture format .rgba32Float expects 4 floats.
-                        // If parseCube gives 3 floats, we need to convert to 4 (padding alpha).
-                        
-                        // Convert [Float] (RGB) to [Float] (RGBA)
-                        var rgba: [Float] = []
-                        rgba.reserveCapacity(size * size * size * 4)
-                        for i in 0..<(payload.count/3) {
-                            rgba.append(payload[i*3])
-                            rgba.append(payload[i*3+1])
-                            rgba.append(payload[i*3+2])
-                            rgba.append(1.0)
+                        // Use 16-bit float to reduce bandwidth/memory. Shader samples as float4.
+                        desc.pixelFormat = .rgba16Float
+
+                        // Convert [Float] (RGB) to [Float16] (RGBA), padding alpha=1.
+                        var rgba16: [Float16] = []
+                        rgba16.reserveCapacity(size * size * size * 4)
+                        for i in 0..<(payload.count / 3) {
+                            rgba16.append(Float16(payload[i * 3]))
+                            rgba16.append(Float16(payload[i * 3 + 1]))
+                            rgba16.append(Float16(payload[i * 3 + 2]))
+                            rgba16.append(Float16(1.0))
                         }
                         
                         desc.width = size
@@ -1227,12 +2003,12 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
                         
                         if let tex = device.makeTexture(descriptor: desc) {
                             // Upload
-                            // Bytes per row = size * 16 (4 floats * 4 bytes)
-                            let bytesPerRow = size * 16
+                            // Bytes per row = size * 8 (4 half floats * 2 bytes)
+                            let bytesPerRow = size * 8
                             let bytesPerImage = size * bytesPerRow // one Z slice
 
                             // For 3D textures on Metal, write each depth slice by varying region.origin.z.
-                            rgba.withUnsafeBytes { raw in
+                            rgba16.withUnsafeBytes { raw in
                                 guard let base = raw.baseAddress else { return }
                                 for z in 0..<size {
                                     let region = MTLRegionMake3D(0, 0, z, size, size, 1)
@@ -1247,8 +2023,8 @@ public actor MetalSimulationEngine: SimulationEngineProtocol {
                                     )
                                 }
                             }
-                            
-                            lutCache[node.id] = tex
+
+                            lutCache[lutKey] = tex
                             lutTex = tex
                         }
                     }

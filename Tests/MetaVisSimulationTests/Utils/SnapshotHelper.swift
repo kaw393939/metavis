@@ -31,6 +31,11 @@ final class SnapshotHelper {
     /// Writes a Float32 RGBA buffer to an EXR file.
     func saveGolden(name: String, buffer: [Float], width: Int, height: Int) throws -> URL {
         let url = storageURL.appendingPathComponent("\(name).exr")
+
+        // Ensure recording/updating is deterministic by overwriting any existing file.
+        if FileManager.default.fileExists(atPath: url.path) {
+            try? FileManager.default.removeItem(at: url)
+        }
         
         // Create Data Provider from Float Buffer
         let byteCount = buffer.count * MemoryLayout<Float>.size
@@ -71,7 +76,7 @@ final class SnapshotHelper {
             throw Error.finalizationFailed
         }
         
-        print("📸 Saved Golden Image: \(url.path)")
+        print("Saved Golden Image: \(url.path)")
         return url
     }
     

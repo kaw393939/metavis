@@ -5,6 +5,7 @@
   "version": "1.0.0",
   "name": "Dialog Cleanwater (v1)",
   "category": "utility",
+  "compilationDomain": "utility",
   "inputs": [],
   "parameters": [],
   "kernelName": ""

@@ -19,7 +19,8 @@ public enum StandardFeatures {
             .float(name: "knee", min: 0.0, max: 1.0, default: 0.1),
             .float(name: "clampMax", min: 10.0, max: 65504.0, default: 100.0)
         ],
-        kernelName: "fx_bloom_composite"
+        kernelName: "fx_bloom_composite",
+        compilationDomain: .clip
     )
     
     public static let filmGrain = FeatureManifest(
@@ -36,7 +37,8 @@ public enum StandardFeatures {
             .float(name: "size", min: 0.1, max: 5.0, default: 1.0),
             .float(name: "shadowBoost", min: 0.0, max: 2.0, default: 0.5)
         ],
-        kernelName: "fx_film_grain"
+        kernelName: "fx_film_grain",
+        compilationDomain: .clip
     )
     
     public static let volumetricLight = FeatureManifest(
@@ -60,7 +62,8 @@ public enum StandardFeatures {
             .float(name: "lightDepth", min: 0.0, max: 1.0, default: 0.0),
             .color(name: "color", default: SIMD4<Float>(1, 1, 1, 1))
         ],
-        kernelName: "fx_volumetric_light"
+        kernelName: "fx_volumetric_light",
+        compilationDomain: .scene
     )
     
     public static let anamorphic = FeatureManifest(
@@ -76,7 +79,8 @@ public enum StandardFeatures {
             .float(name: "intensity", min: 0.0, max: 5.0, default: 1.0),
             .vector3(name: "tint", default: SIMD3<Float>(0.0, 0.5, 1.0)) // Cyan default
         ],
-        kernelName: "fx_anamorphic_composite"
+        kernelName: "fx_anamorphic_composite",
+        compilationDomain: .scene
     )
     
     public static let halation = FeatureManifest(
@@ -97,7 +101,8 @@ public enum StandardFeatures {
             .int(name: "radialFalloff", min: 0, max: 1, default: 1),
             .vector3(name: "tint", default: SIMD3<Float>(1.0, 0.3, 0.1)) // Red-Orange Tint
         ],
-        kernelName: "fx_halation_composite"
+        kernelName: "fx_halation_composite",
+        compilationDomain: .scene
     )
 
     public static let vignette = FeatureManifest(
@@ -115,7 +120,8 @@ public enum StandardFeatures {
             .float(name: "smoothness", min: 0.0, max: 1.0, default: 1.0),
             .float(name: "roundness", min: 0.0, max: 1.0, default: 1.0)
         ],
-        kernelName: "fx_vignette_physical"
+        kernelName: "fx_vignette_physical",
+        compilationDomain: .clip
     )
 
     public static let lensSystem = FeatureManifest(
@@ -131,7 +137,8 @@ public enum StandardFeatures {
             .float(name: "k2", min: -1.0, max: 1.0, default: 0.0),
             .float(name: "chromaticAberration", min: 0.0, max: 0.1, default: 0.0)
         ],
-        kernelName: "fx_lens_system"
+        kernelName: "fx_lens_system",
+        compilationDomain: .clip
     )
 
     public static let volumetricNebula = FeatureManifest(
@@ -186,7 +193,8 @@ public enum StandardFeatures {
              .float(name: "hdrScale", min: 0, max: 10, default: 1.0),
              .float(name: "debugMode", min: 0, max: 3, default: 0.0)
         ],
-        kernelName: "fx_volumetric_nebula"
+        kernelName: "fx_volumetric_nebula",
+        compilationDomain: .scene
     )
 
     public static let tonemapACES = FeatureManifest(
@@ -196,7 +204,8 @@ public enum StandardFeatures {
         category: .color,
         inputs: [PortDefinition(name: "source", type: .image)],
         parameters: [.float(name: "exposure", min: -5.0, max: 5.0, default: 0.0)],
-        kernelName: "fx_tonemap_aces"
+        kernelName: "fx_tonemap_aces",
+        compilationDomain: .clip
     )
 
     public static let tonemapPQ = FeatureManifest(
@@ -206,7 +215,8 @@ public enum StandardFeatures {
         category: .color,
         inputs: [PortDefinition(name: "source", type: .image)],
         parameters: [.float(name: "maxNits", min: 100.0, max: 4000.0, default: 1000.0)],
-        kernelName: "fx_tonemap_pq"
+        kernelName: "fx_tonemap_pq",
+        compilationDomain: .clip
     )
 
     public static let applyLUT = FeatureManifest(
@@ -219,7 +229,8 @@ public enum StandardFeatures {
             PortDefinition(name: "lut", type: .texture3d)
         ],
         parameters: [.float(name: "intensity", min: 0.0, max: 1.0, default: 1.0)],
-        kernelName: "fx_apply_lut"
+        kernelName: "fx_apply_lut",
+        compilationDomain: .scene
     )
 
     public static let colorGradeSimple = FeatureManifest(
@@ -235,7 +246,8 @@ public enum StandardFeatures {
             .float(name: "temperature", min: -1.0, max: 1.0, default: 0.0),
             .float(name: "tint", min: -1.0, max: 1.0, default: 0.0)
         ],
-        kernelName: "fx_color_grade_simple"
+        kernelName: "fx_color_grade_simple",
+        compilationDomain: .clip
     )
 
     public static let falseColorTurbo = FeatureManifest(
@@ -248,7 +260,8 @@ public enum StandardFeatures {
             .float(name: "exposure", min: -10.0, max: 10.0, default: 0.0),
             .float(name: "gamma", min: 0.1, max: 4.0, default: 1.0)
         ],
-        kernelName: "fx_false_color_turbo"
+        kernelName: "fx_false_color_turbo",
+        compilationDomain: .clip
     )
 
     public static let blurGaussian = FeatureManifest(
@@ -262,7 +275,8 @@ public enum StandardFeatures {
         passes: [
             FeaturePass(logicalName: "fx_blur_h", function: "fx_blur_h", inputs: ["source"], output: "blur_tmp"),
             FeaturePass(logicalName: "fx_blur_v", function: "fx_blur_v", inputs: ["blur_tmp"], output: "output")
-        ]
+        ],
+        compilationDomain: .clip
     )
     
     // We register H and V separate for now as Primitives.
@@ -273,7 +287,8 @@ public enum StandardFeatures {
         category: .blur,
         inputs: [PortDefinition(name: "source", type: .image)],
         parameters: [.float(name: "radius", min: 0.0, max: 100.0, default: 10.0)],
-        kernelName: "fx_blur_h"
+        kernelName: "fx_blur_h",
+        compilationDomain: .clip
     )
     
     public static let blurGaussianV = FeatureManifest(
@@ -283,7 +298,8 @@ public enum StandardFeatures {
         category: .blur,
         inputs: [PortDefinition(name: "source", type: .image)],
         parameters: [.float(name: "radius", min: 0.0, max: 100.0, default: 10.0)],
-        kernelName: "fx_blur_v"
+        kernelName: "fx_blur_v",
+        compilationDomain: .clip
     )
 
     public static let blurBokeh = FeatureManifest(
@@ -293,7 +309,8 @@ public enum StandardFeatures {
         category: .blur,
         inputs: [PortDefinition(name: "source", type: .image)],
         parameters: [.float(name: "radius", min: 0.0, max: 100.0, default: 10.0)],
-        kernelName: "fx_bokeh_blur"
+        kernelName: "fx_bokeh_blur",
+        compilationDomain: .clip
     )
 
     public static let blurredMask = FeatureManifest(
@@ -309,7 +326,28 @@ public enum StandardFeatures {
             .float(name: "radius", min: 0.0, max: 100.0, default: 10.0),
             .float(name: "threshold", min: 0.0, max: 1.0, default: 0.5)
         ],
-        kernelName: "fx_masked_blur"
+        kernelName: "fx_masked_blur",
+        passes: [
+            // Pass 1: Downsample the source to create the base for the blurry mips.
+            // Using resize_bilinear_rgba16f creates a half-res copy.
+            FeaturePass(
+                logicalName: "downsample",
+                function: "resize_bilinear_rgba16f",
+                inputs: ["source"],
+                output: "blur_base"
+            ),
+            // Pass 2: Composite the sharp source and the mips from blur_base.
+            // Inputs map to kernel texture indices: 0=sharp, 1=blurry, 2=mask
+            // Note: MetalSimulationEngine will generate mips for "blur_base" because it's an input to a node?
+            // Wait, we need to ensure "blurry" has mips.
+            FeaturePass(
+                logicalName: "composite",
+                function: "fx_masked_blur",
+                inputs: ["source", "blur_base", "mask"],
+                output: "output"
+            )
+        ],
+        compilationDomain: .scene
     )
     
     public static let temporalAccumulate = FeatureManifest(
@@ -322,7 +360,8 @@ public enum StandardFeatures {
             PortDefinition(name: "accum", type: .image) // Needs read/write support or distinct input/output
         ],
         parameters: [.float(name: "weight", min: 0.0, max: 1.0, default: 0.1)],
-        kernelName: "fx_accumulate"
+        kernelName: "fx_accumulate",
+        compilationDomain: .scene
     )
 
     public static let faceEnhance = FeatureManifest(
@@ -338,7 +377,8 @@ public enum StandardFeatures {
             .float(name: "skinSmoothing", min: 0.0, max: 1.0, default: 0.2),
             .float(name: "intensity", min: 0.0, max: 1.0, default: 1.0)
         ],
-        kernelName: "fx_face_enhance"
+        kernelName: "fx_face_enhance",
+        compilationDomain: .clip
     )
 
     public static let beautyEnhance = FeatureManifest(
@@ -353,7 +393,8 @@ public enum StandardFeatures {
             .float(name: "skinSmoothing", min: 0.0, max: 1.0, default: 0.35),
             .float(name: "intensity", min: 0.0, max: 1.0, default: 0.8)
         ],
-        kernelName: "fx_beauty_enhance"
+        kernelName: "fx_beauty_enhance",
+        compilationDomain: .clip
     )
     
     public static let lightLeak = FeatureManifest(
@@ -367,7 +408,8 @@ public enum StandardFeatures {
             .vector3(name: "tint", default: [1.0, 0.5, 0.2]),
             .float(name: "animation", min: 0.0, max: 10.0, default: 0.0)
         ],
-        kernelName: "cs_light_leak"
+        kernelName: "cs_light_leak",
+        compilationDomain: .clip
     )
     
     public static let spectralDispersion = FeatureManifest(
@@ -381,7 +423,8 @@ public enum StandardFeatures {
             .float(name: "spread", min: 0.0, max: 20.0, default: 2.0),
             .vector3(name: "center", default: [0.5, 0.5, 0.0])
         ],
-        kernelName: "cs_spectral_dispersion"
+        kernelName: "cs_spectral_dispersion",
+        compilationDomain: .clip
     )
     
     public static let faceMaskGenerator = FeatureManifest(
@@ -391,7 +434,8 @@ public enum StandardFeatures {
         category: .utility,
         inputs: [], // Generator
         parameters: [], // Dynamic parameters (rects) not listed in static manifest usually, or we list them as 'hidden'?
-        kernelName: "fx_generate_face_mask"
+        kernelName: "fx_generate_face_mask",
+        compilationDomain: .generator
     )
     
     // Generators (LIGM)
@@ -402,7 +446,8 @@ public enum StandardFeatures {
         category: .generator,
         inputs: [],
         parameters: [],
-        kernelName: "fx_macbeth"
+        kernelName: "fx_macbeth",
+        compilationDomain: .generator
     )
 
     public static let zonePlateGenerator = FeatureManifest(
@@ -414,7 +459,8 @@ public enum StandardFeatures {
         parameters: [
              .float(name: "time", min: 0.0, max: 1000.0, default: 0.0)
         ],
-        kernelName: "fx_zone_plate"
+        kernelName: "fx_zone_plate",
+        compilationDomain: .generator
     )
     
     public static let smpteGenerator = FeatureManifest(
@@ -424,7 +470,8 @@ public enum StandardFeatures {
         category: .generator,
         inputs: [],
         parameters: [],
-        kernelName: "fx_smpte_bars"
+        kernelName: "fx_smpte_bars",
+        compilationDomain: .generator
     )
     
     public static let maskedGrade = FeatureManifest(
@@ -446,7 +493,8 @@ public enum StandardFeatures {
             .float(name: "exposure", min: -5.0, max: 5.0, default: 0.0),
             .float(name: "invertMask", min: 0.0, max: 1.0, default: 0.0)
         ],
-        kernelName: "fx_masked_grade"
+        kernelName: "fx_masked_grade",
+        compilationDomain: .scene
     )
 
     public static func registerAll() async {

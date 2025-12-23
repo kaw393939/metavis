@@ -1,6 +1,53 @@
 #include <metal_stdlib>
 using namespace metal;
 
+// MARK: - Fullscreen Render Helpers
+
+struct FullscreenVSOut {
+    float4 position [[position]];
+    float2 uv;
+};
+
+// Fullscreen triangle (3 verts) to avoid vertex buffers.
+vertex FullscreenVSOut compositor_fullscreen_vertex(uint vid [[vertex_id]]) {
+    // Clip-space positions + matching UVs.
+    // Triangle covers the full viewport: (-1,-1), (3,-1), (-1,3)
+    float2 pos;
+    float2 uv;
+    if (vid == 0) {
+        pos = float2(-1.0, -1.0);
+        uv  = float2(0.0, 0.0);
+    } else if (vid == 1) {
+        pos = float2( 3.0, -1.0);
+        uv  = float2(2.0, 0.0);
+    } else {
+        pos = float2(-1.0,  3.0);
+        uv  = float2(0.0, 2.0);
+    }
+
+    FullscreenVSOut out;
+    out.position = float4(pos, 0.0, 1.0);
+    out.uv = uv;
+    return out;
+}
+
+fragment float4 compositor_sample_fragment(
+    FullscreenVSOut in [[stage_in]],
+    texture2d<float, access::sample> tex [[texture(0)]],
+    sampler s [[sampler(0)]]
+) {
+    return tex.sample(s, in.uv);
+}
+
+// Pixel-coordinate read (no sampler). Useful for blit/compose passes where inputs match output.
+fragment float4 compositor_read_fragment(
+    float4 position [[position]],
+    texture2d<float, access::read> tex [[texture(0)]]
+) {
+    uint2 gid = uint2(position.xy);
+    return tex.read(gid);
+}
+
 // MARK: - Alpha Compositor
 // Composites two layers using alpha blending (standard "over" operator)
 

@@ -296,7 +296,7 @@ float shadowTransmittance(float3 pos, constant VolumetricNebulaParams& params) {
 // MARK: - Main Raymarching Kernel
 
 kernel void fx_volumetric_nebula(
-    texture2d<float, access::read> depthTexture [[texture(0)]],
+    depth2d<float, access::sample> depthTexture [[texture(0)]],
     texture2d<float, access::write> outputTexture [[texture(1)]],
     constant VolumetricNebulaParams& params [[buffer(0)]],
     constant GradientStop3D* colorGradient [[buffer(1)]],
@@ -320,7 +320,8 @@ kernel void fx_volumetric_nebula(
     );
     
     // Read scene depth for early termination
-    float sceneDepth = depthTexture.read(gid).r;
+    constexpr sampler depthS(address::clamp_to_edge, filter::nearest, coord::normalized);
+    float sceneDepth = depthTexture.sample(depthS, uv);
     float maxDist = sceneDepth < 1.0 ? sceneDepth * 100.0 : 1e10; // Convert to world units
     
     // Intersect volume AABB

@@ -1,0 +1,7 @@
+{
+  "query": "ACES 1.3 aces-dev repository RRT ctl file name",
+  "answer": "RRT.ctl (path: transforms/ctl/rrt/RRT.ctl). ([community.acescentral.com](https://community.acescentral.com/t/how-to-define-precisely-what-happens-during-lmt-rrt-odt/3278/2))\n\nNote: In ACES 1.3, the RRT CTL file is unchanged (TransformID inside the file shows RRT.a1.0.3); ACES 1.3 is archived under the v1.3 tag in the aces-core repo. ([community.acescentral.com](https://community.acescentral.com/t/how-to-define-precisely-what-happens-during-lmt-rrt-odt/3278/2))",
+  "citations": [],
+  "sources": [],
+  "metadata": {}
+}

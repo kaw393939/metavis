@@ -28,8 +28,15 @@ final class VerticalSliceTests: XCTestCase {
         
         // Check for ACEScg Enforcement
         XCTAssertTrue(nodeShaders.contains("idt_rec709_to_acescg"), "Graph MUST contain Input Device Transform")
-        XCTAssertTrue(nodeShaders.contains("odt_acescg_to_rec709"), "Graph MUST contain Output Device Transform")
+        // Output Device Transform can be LUT-based (shipping default) or shader-based fallback.
+        let hasShaderODT = nodeShaders.contains("odt_acescg_to_rec709")
+        let hasLUTODT = nodeShaders.contains("lut_apply_3d_rgba16f")
+        XCTAssertTrue(hasShaderODT || hasLUTODT, "Graph MUST contain Output Device Transform")
         XCTAssertTrue(nodeShaders.contains("source_texture"), "Graph MUST contain Source Node")
+
+        // Ensure we have exactly one terminal display transform node.
+        let terminalODTs = request.graph.nodes.filter { $0.shader == "odt_acescg_to_rec709" || $0.shader == "lut_apply_3d_rgba16f" }
+        XCTAssertEqual(terminalODTs.count, 1, "Graph must contain exactly one terminal ODT")
         
         // 5. Test Color Adjust (Manual Node Injection for Test)
         // In a real scenario, the Compiler would insert this based on Track Effects.
@@ -46,6 +53,6 @@ final class VerticalSliceTests: XCTestCase {
         // The Root Node should be the ODT
         let rootNode = request.graph.nodes.first { $0.id == request.graph.rootNodeID }
         XCTAssertNotNil(rootNode)
-        XCTAssertEqual(rootNode?.shader, "odt_acescg_to_rec709")
+        XCTAssertTrue(rootNode?.shader == "odt_acescg_to_rec709" || rootNode?.shader == "lut_apply_3d_rgba16f")
     }
 }

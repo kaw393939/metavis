@@ -31,7 +31,7 @@ final class SnapshotVerificationTests: XCTestCase {
                 if SnapshotHelper.shouldRecordGoldens {
                     let url = try helper.saveGolden(name: goldenName, buffer: originalBuffer, width: width, height: height)
                     XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
-                    throw XCTSkip("Golden updated; re-run to verify")
+                    return
                 } else {
                     XCTFail("Roundtrip golden mismatch for \(goldenName).exr max=\(maxDelta) avg=\(avgDelta) (set RECORD_GOLDENS=1 to update)")
                 }
@@ -40,7 +40,7 @@ final class SnapshotVerificationTests: XCTestCase {
             if SnapshotHelper.shouldRecordGoldens {
                 let url = try helper.saveGolden(name: goldenName, buffer: originalBuffer, width: width, height: height)
                 XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
-                throw XCTSkip("Golden recorded; re-run to verify")
+                return
             } else {
                 XCTFail("Missing golden \(goldenName).exr (re-run with RECORD_GOLDENS=1 to record)")
             }
