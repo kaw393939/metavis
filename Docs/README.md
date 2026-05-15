@@ -1,3 +1,25 @@
+# MetaVis Demo Projects
+
+<!-- portfolio-curation -->
+## Portfolio Overview
+Curated demo projects and media assets for reproducible MetaVis visualization experiments.
+
+## What This Demonstrates
+- Visualization demos
+- media libraries
+- reproducible prototypes
+
+## Stack
+Swift
+
+## Portfolio Status
+This repository is part of Keith Williams' curated public portfolio. The README has been updated to explain the project purpose, technical focus, and why the work is worth reviewing.
+<!-- /portfolio-curation -->
+
+---
+
+## Original Notes
+
 # Demo Projects
 
 This folder contains curated, reproducible demo projects for MetaVis.
@@ -15,3 +37,4 @@ Design goals:
 
 ## Notes
 - The `test_outputs/` folder contains generated artifacts from tests; it’s not used as source media.
+
